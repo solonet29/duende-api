@@ -9,7 +9,12 @@ const app = express();
 const port = PORT || 3001;
 const mongoClient = new MongoClient(MONGO_URI);
 
-app.use(cors());
+// Configuración de CORS para permitir solo peticiones desde tu frontend
+const corsOptions = {
+  origin: 'https://duende-frontend.vercel.app' 
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 // El endpoint que el usuario consultará

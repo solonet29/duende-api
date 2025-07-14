@@ -34,7 +34,8 @@ app.get('/events', async (req, res) => {
             query = { $text: { $search: search } };
         }
 
-        const events = await eventsCollection.find(query).toArray();
+        // LÍNEA NUEVA (CON ORDENACIÓN POR FECHA) ✅
+const events = await eventsCollection.find(query).sort({ date: 1 }).toArray();
         res.json(events);
     } catch (error) {
         console.error("Error al buscar eventos:", error);

@@ -9,17 +9,36 @@ const app = express();
 const port = PORT || 3001;
 const mongoClient = new MongoClient(MONGO_URI);
 
-// Configuración de CORS para permitir solo peticiones desde tu frontend
+// --- ¡AQUÍ ESTÁ LA MEJORA! ---
+// 1. Creamos una lista con todos los dominios que tienen permiso.
+const allowedOrigins = [
+  'https://duende-frontend.vercel.app',
+  'https://buscador.afland.es'
+];
+
+// 2. Configuramos CORS para que use esa lista.
 const corsOptions = {
-  origin: 'https://duende-frontend.vercel.app' 
+  origin: function (origin, callback) {
+    // Permite peticiones sin origen (como las de Postman o apps móviles)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'La política de CORS para este sitio no permite el acceso desde el origen especificado.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  }
 };
 
+// 3. Usamos la nueva configuración.
 app.use(cors(corsOptions));
+// --- FIN DE LA MEJORA ---
+
+
 app.use(express.json());
 
-// El endpoint que el usuario consultará
 app.get('/events', async (req, res) => {
-    const { search } = req.query; // Obtiene el texto de búsqueda, ej: /events?search=madrid
+    const { search } = req.query; 
     console.log(`Búsqueda recibida: "${search}"`);
 
     try {
@@ -29,12 +48,9 @@ app.get('/events', async (req, res) => {
 
         let query = {};
         if (search) {
-            // Crea una búsqueda "full-text" sobre los campos importantes.
-            // Necesitarás crear un "índice de texto" en MongoDB Atlas para que funcione bien.
             query = { $text: { $search: search } };
         }
 
-        // LÍNEA NUEVA (CON ORDENACIÓN POR FECHA) ✅
         const events = await eventsCollection.find(query).sort({ date: 1 }).toArray();
         res.json(events);
     } catch (error) {

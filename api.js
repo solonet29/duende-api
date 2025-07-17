@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 
-// --- CONFIGURACIÓN (Sin cambios) ---
+// --- CONFIGURACIÓN INICIAL ---
 const { MONGO_URI, PORT } = process.env;
 const app = express();
 const port = PORT || 3001;
@@ -22,11 +22,30 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 
-// --- RUTA DE BÚSQUEDA (Sin cambios) ---
+// --- FUNCIÓN PRINCIPAL PARA ARRANCAR EL SERVIDOR ---
+async function startServer() {
+    try {
+        // Conectamos a la base de datos ANTES de que el servidor empiece a escuchar.
+        await mongoClient.connect();
+        console.log("Conectado exitosamente a la base de datos MongoDB.");
+
+        // Una vez conectados, ponemos el servidor a escuchar peticiones.
+        app.listen(port, () => {
+            console.log(`API de Duende Finder escuchando en http://localhost:${port}`);
+        });
+
+    } catch (error) {
+        console.error("Error crítico al conectar con la base de datos:", error);
+        process.exit(1);
+    }
+}
+
+// --- RUTAS DE LA API ---
+
+// Ruta de búsqueda (sin cambios)
 app.get('/events', async (req, res) => {
     const { search, timeframe } = req.query;
     try {
-        await mongoClient.connect();
         const db = mongoClient.db("DuendeDB");
         const eventsCollection = db.collection("events");
         let query = {};
@@ -43,39 +62,31 @@ app.get('/events', async (req, res) => {
         const events = await eventsCollection.find(query).sort({ date: 1 }).toArray();
         res.json(events);
     } catch (error) {
+        console.error("Error al buscar eventos:", error);
         res.status(500).json({ error: "Error interno del servidor." });
-    } finally {
-        await mongoClient.close();
     }
 });
 
-// --- ¡NUEVA RUTA PARA EL CONTADOR DE EVENTOS! ---
+// Ruta del contador (CORREGIDA)
 app.get('/events/count', async (req, res) => {
     console.log("Petición recibida para contar eventos futuros.");
     try {
-        await mongoClient.connect();
+        // Ya no necesitamos .connect() ni .close() aquí. Usamos la conexión existente.
         const db = mongoClient.db("DuendeDB");
         const eventsCollection = db.collection("events");
 
-        // Creamos una consulta para contar solo los eventos con fecha de hoy en adelante
         const today = new Date();
         const todayString = today.toISOString().split('T')[0];
         const query = { date: { $gte: todayString } };
 
         const count = await eventsCollection.countDocuments(query);
-        
-        // Devolvemos el número en un objeto JSON
         res.json({ total: count });
 
     } catch (error) {
         console.error("Error al contar eventos:", error);
         res.status(500).json({ error: "Error interno del servidor." });
-    } finally {
-        await mongoClient.close();
     }
 });
 
-
-app.listen(port, () => {
-    console.log(`API de Duende Finder escuchando en http://localhost:${port}`);
-});
+// --- INICIAMOS TODO EL PROCESO ---
+startServer();

@@ -39,7 +39,8 @@ app.use(express.json());
 
 // RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
-    const { search, artist, city, dateFrom, dateTo, timeframe } = req.query;
+    // Leemos el nuevo parámetro 'country'
+    const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
     
     try {
         const eventsCollection = db.collection("events");
@@ -48,14 +49,12 @@ app.get('/events', async (req, res) => {
 
         const filterConditions = [];
 
-        // Filtro base: siempre buscar eventos desde la fecha de hoy
+        // Filtro base por fecha
         filterConditions.push({ date: { $gte: today.toISOString().split('T')[0] } });
 
-        // --- LÓGICA DE FILTRADO MEJORADA CON CAMPO "PROVINCIA" ---
+        // --- LÓGICA DE FILTRADO CORREGIDA ---
 
         if (city) {
-            // SOLUCIÓN DEFINITIVA: Busca el término 'city' tanto en el campo 'city' como en el campo 'provincia'.
-            // Esto es más preciso y eficiente que la búsqueda de texto anterior.
             const cityRegex = new RegExp(city, 'i');
             filterConditions.push({
                 $or: [
@@ -64,6 +63,13 @@ app.get('/events', async (req, res) => {
                 ]
             });
         }
+        
+        // ¡SOLUCIÓN! Añadimos el filtro para el país
+        if (country) {
+            // Usamos una expresión regular para una coincidencia exacta sin importar mayúsculas/minúsculas
+            filterConditions.push({ country: { $regex: new RegExp(`^${country}$`, 'i') } });
+        }
+
         if (artist) {
             filterConditions.push({ artist: { $regex: new RegExp(artist, 'i') } });
         }
@@ -81,7 +87,6 @@ app.get('/events', async (req, res) => {
         }
 
         if (search) {
-            // El filtro de texto general funciona sobre los índices de texto de la colección
             filterConditions.push({ $text: { $search: search } });
         }
 

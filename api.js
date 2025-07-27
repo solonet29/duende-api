@@ -12,7 +12,6 @@ const app = express();
 const port = PORT || 3001;
 
 // --- CLIENTE DE MONGODB ---
-// Conectamos una sola vez y reutilizamos el cliente.
 const mongoClient = new MongoClient(MONGO_URI);
 let db;
 
@@ -20,7 +19,7 @@ let db;
 const allowedOrigins = [
     'https://duende-frontend.vercel.app', 
     'https://buscador.afland.es',
-    'http://localhost:3000' // Añadido para desarrollo local
+    'http://localhost:3000'
 ];
 
 const corsOptions = {
@@ -49,15 +48,21 @@ app.get('/events', async (req, res) => {
 
         const filterConditions = [];
 
-        // 1. Filtro base por fecha
+        // Filtro base: siempre buscar eventos desde la fecha de hoy
         filterConditions.push({ date: { $gte: today.toISOString().split('T')[0] } });
 
-        // 2. Añadimos filtros adicionales
+        // --- LÓGICA DE FILTRADO MEJORADA CON CAMPO "PROVINCIA" ---
+
         if (city) {
-            // --- CAMBIO IMPORTANTE AQUÍ ---
-            // Hemos eliminado '^' y '$' para que busque la ciudad como parte del texto (provincia)
-            // en lugar de una coincidencia exacta.
-            filterConditions.push({ city: { $regex: new RegExp(city, 'i') } });
+            // SOLUCIÓN DEFINITIVA: Busca el término 'city' tanto en el campo 'city' como en el campo 'provincia'.
+            // Esto es más preciso y eficiente que la búsqueda de texto anterior.
+            const cityRegex = new RegExp(city, 'i');
+            filterConditions.push({
+                $or: [
+                    { city: cityRegex },
+                    { provincia: cityRegex }
+                ]
+            });
         }
         if (artist) {
             filterConditions.push({ artist: { $regex: new RegExp(artist, 'i') } });
@@ -76,6 +81,7 @@ app.get('/events', async (req, res) => {
         }
 
         if (search) {
+            // El filtro de texto general funciona sobre los índices de texto de la colección
             filterConditions.push({ $text: { $search: search } });
         }
 
@@ -109,18 +115,16 @@ app.get('/events/count', async (req, res) => {
 // --- FUNCIÓN PARA INICIAR EL SERVIDOR ---
 async function startServer() {
     try {
-        // Conectamos al iniciar
         await mongoClient.connect();
         console.log("Conectado a MongoDB correctamente.");
-        db = mongoClient.db("DuendeDB"); // Asignamos la instancia de la BD a la variable global
+        db = mongoClient.db("DuendeDB");
 
-        // Iniciamos el servidor Express
         app.listen(port, () => {
             console.log(`Servidor escuchando en http://localhost:${port}`);
         });
     } catch (error) {
         console.error("No se pudo conectar a MongoDB o iniciar el servidor:", error);
-        process.exit(1); // Salimos si no podemos conectar a la BD
+        process.exit(1);
     }
 }
 

@@ -40,53 +40,45 @@ app.use(express.json());
 
 // RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
-    // Extraemos todos los posibles parámetros de la query
     const { search, artist, city, dateFrom, dateTo, timeframe } = req.query;
     
     try {
         const eventsCollection = db.collection("events");
         const today = new Date();
-        today.setHours(0, 0, 0, 0); // Aseguramos que la comparación sea desde el inicio del día
+        today.setHours(0, 0, 0, 0);
 
-        // Usamos un array de filtros para combinarlos con $and
         const filterConditions = [];
 
-        // 1. Filtro base por fecha: siempre buscar eventos desde hoy
+        // 1. Filtro base por fecha
         filterConditions.push({ date: { $gte: today.toISOString().split('T')[0] } });
 
-        // 2. Añadimos filtros adicionales si existen
+        // 2. Añadimos filtros adicionales
         if (city) {
-            // Búsqueda exacta por ciudad, insensible a mayúsculas/minúsculas
-            filterConditions.push({ city: { $regex: new RegExp(`^${city}$`, 'i') } });
+            // --- CAMBIO IMPORTANTE AQUÍ ---
+            // Hemos eliminado '^' y '$' para que busque la ciudad como parte del texto (provincia)
+            // en lugar de una coincidencia exacta.
+            filterConditions.push({ city: { $regex: new RegExp(city, 'i') } });
         }
         if (artist) {
-            // Búsqueda de subcadena en artista, insensible a mayúsculas/minúsculas
             filterConditions.push({ artist: { $regex: new RegExp(artist, 'i') } });
         }
         if (dateFrom) {
-            // Si hay 'dateFrom', lo usamos. Si no, el filtro base de "hoy" se mantiene.
             filterConditions[0].date.$gte = dateFrom;
         }
         if (dateTo) {
-            // Añadimos la condición de fecha final si existe
             filterConditions[0].date.$lte = dateTo;
         }
         
-        // 3. Manejo del 'timeframe' para la carga inicial
         if (timeframe === 'week' && !dateTo) {
             const nextWeek = new Date(today);
             nextWeek.setDate(today.getDate() + 7);
             filterConditions[0].date.$lte = nextWeek.toISOString().split('T')[0];
         }
 
-        // 4. Manejo de la búsqueda de texto general (si existe)
         if (search) {
-            // Este filtro es especial y usa un índice de texto en MongoDB
             filterConditions.push({ $text: { $search: search } });
         }
 
-        // 5. Construimos la consulta final
-        // Si hay más de una condición, las unimos con $and. Si no, usamos la única condición.
         const finalFilter = filterConditions.length > 1 ? { $and: filterConditions } : filterConditions[0] || {};
         
         console.log("Ejecutando consulta con filtro:", JSON.stringify(finalFilter, null, 2));

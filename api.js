@@ -39,7 +39,6 @@ app.use(express.json());
 
 // RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
-    // Leemos el nuevo parámetro 'country'
     const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
     
     try {
@@ -49,10 +48,7 @@ app.get('/events', async (req, res) => {
 
         const filterConditions = [];
 
-        // Filtro base por fecha
         filterConditions.push({ date: { $gte: today.toISOString().split('T')[0] } });
-
-        // --- LÓGICA DE FILTRADO CORREGIDA ---
 
         if (city) {
             const cityRegex = new RegExp(city, 'i');
@@ -64,9 +60,7 @@ app.get('/events', async (req, res) => {
             });
         }
         
-        // ¡SOLUCIÓN! Añadimos el filtro para el país
         if (country) {
-            // Usamos una expresión regular para una coincidencia exacta sin importar mayúsculas/minúsculas
             filterConditions.push({ country: { $regex: new RegExp(`^${country}$`, 'i') } });
         }
 
@@ -95,7 +89,31 @@ app.get('/events', async (req, res) => {
         console.log("Ejecutando consulta con filtro:", JSON.stringify(finalFilter, null, 2));
         
         const events = await eventsCollection.find(finalFilter).sort({ date: 1 }).toArray();
-        res.json(events);
+
+        // --- INICIO: LÓGICA PARA ELIMINAR DUPLICADOS ---
+        const uniqueEvents = new Map();
+
+        events.forEach(event => {
+            // Se crea una clave única basada en el artista, la fecha y la hora.
+            const key = `${event.artist?.toLowerCase().trim()}|${event.date}|${event.time}`;
+            const existingEvent = uniqueEvents.get(key);
+
+            // Si no hemos visto este evento, lo añadimos.
+            if (!existingEvent) {
+                uniqueEvents.set(key, event);
+            } else {
+                // Si ya existe, aplicamos la regla: preferimos el que tiene sourceURL.
+                // Si el evento que ya tenemos guardado NO tiene URL, pero el nuevo SÍ la tiene, lo reemplazamos.
+                if (!existingEvent.sourceURL && event.sourceURL) {
+                    uniqueEvents.set(key, event);
+                }
+            }
+        });
+
+        const filteredEvents = Array.from(uniqueEvents.values());
+        // --- FIN: LÓGICA PARA ELIMINAR DUPLICADOS ---
+
+        res.json(filteredEvents); // Enviamos la lista ya filtrada
 
     } catch (error) {
         console.error("Error al buscar eventos:", error);

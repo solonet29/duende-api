@@ -3,70 +3,134 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 
-// --- CONFIGURACIÓN (Sin cambios) ---
+// --- CONFIGURACIÓN ---
 const { MONGO_URI, PORT } = process.env;
+if (!MONGO_URI) {
+    throw new Error('La variable de entorno MONGO_URI no está definida.');
+}
 const app = express();
 const port = PORT || 3001;
-const mongoClient = new MongoClient(MONGO_URI);
 
-const allowedOrigins = ['https://duende-frontend.vercel.app', 'https://buscador.afland.es'];
-const corsOptions = { /* ...código de CORS sin cambios... */ };
+// --- CLIENTE DE MONGODB ---
+// Conectamos una sola vez y reutilizamos el cliente.
+const mongoClient = new MongoClient(MONGO_URI);
+let db;
+
+// --- MIDDLEWARE ---
+const allowedOrigins = [
+    'https://duende-frontend.vercel.app', 
+    'https://buscador.afland.es',
+    'http://localhost:3000' // Añadido para desarrollo local
+];
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  }
+};
+
 app.use(cors(corsOptions));
 app.use(express.json());
 
-async function startServer() { /* ...código de startServer sin cambios... */ }
+// --- RUTAS DE LA API ---
 
-// --- RUTA DE BÚSQUEDA (CORREGIDA Y MEJORADA) ---
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
-    const { search, artist, city, dateFrom, dateTo } = req.query;
+    // Extraemos todos los posibles parámetros de la query
+    const { search, artist, city, dateFrom, dateTo, timeframe } = req.query;
     
     try {
-        await mongoClient.connect();
-        const db = mongoClient.db("DuendeDB");
         const eventsCollection = db.collection("events");
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Aseguramos que la comparación sea desde el inicio del día
 
-        const todayString = new Date().toISOString().split('T')[0];
-        
-        // 1. CONSTRUIMOS UN OBJETO DE FILTROS SEGURO
-        // Empezamos con el filtro base que solo busca eventos futuros
-        let filter = { date: { $gte: todayString } };
+        // Usamos un array de filtros para combinarlos con $and
+        const filterConditions = [];
 
-        // 2. AÑADIMOS LOS FILTROS DE FORMA DINÁMICA
+        // 1. Filtro base por fecha: siempre buscar eventos desde hoy
+        filterConditions.push({ date: { $gte: today.toISOString().split('T')[0] } });
+
+        // 2. Añadimos filtros adicionales si existen
         if (city) {
-            // Usamos una expresión regular para que la búsqueda de ciudad no distinga mayúsculas/minúsculas
-            filter.city = { $regex: new RegExp(`^${city}$`, 'i') };
+            // Búsqueda exacta por ciudad, insensible a mayúsculas/minúsculas
+            filterConditions.push({ city: { $regex: new RegExp(`^${city}$`, 'i') } });
         }
         if (artist) {
-            // Igual para el artista
-            filter.artist = { $regex: new RegExp(artist, 'i') };
+            // Búsqueda de subcadena en artista, insensible a mayúsculas/minúsculas
+            filterConditions.push({ artist: { $regex: new RegExp(artist, 'i') } });
         }
         if (dateFrom) {
-            filter.date.$gte = dateFrom;
+            // Si hay 'dateFrom', lo usamos. Si no, el filtro base de "hoy" se mantiene.
+            filterConditions[0].date.$gte = dateFrom;
         }
         if (dateTo) {
-            filter.date.$lte = dateTo;
+            // Añadimos la condición de fecha final si existe
+            filterConditions[0].date.$lte = dateTo;
         }
         
-        // El filtro de texto general ($text) es especial y no puede combinarse
-        // con otros filtros de texto como los de arriba. Le damos prioridad.
-        if (search) {
-             console.log(`Búsqueda de texto general recibida: "${search}"`);
-             filter = { $text: { $search: search } };
+        // 3. Manejo del 'timeframe' para la carga inicial
+        if (timeframe === 'week' && !dateTo) {
+            const nextWeek = new Date(today);
+            nextWeek.setDate(today.getDate() + 7);
+            filterConditions[0].date.$lte = nextWeek.toISOString().split('T')[0];
         }
 
-        console.log("Ejecutando consulta avanzada:", JSON.stringify(filter));
-        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
+        // 4. Manejo de la búsqueda de texto general (si existe)
+        if (search) {
+            // Este filtro es especial y usa un índice de texto en MongoDB
+            filterConditions.push({ $text: { $search: search } });
+        }
+
+        // 5. Construimos la consulta final
+        // Si hay más de una condición, las unimos con $and. Si no, usamos la única condición.
+        const finalFilter = filterConditions.length > 1 ? { $and: filterConditions } : filterConditions[0] || {};
+        
+        console.log("Ejecutando consulta con filtro:", JSON.stringify(finalFilter, null, 2));
+        
+        const events = await eventsCollection.find(finalFilter).sort({ date: 1 }).toArray();
         res.json(events);
 
     } catch (error) {
         console.error("Error al buscar eventos:", error);
         res.status(500).json({ error: "Error interno del servidor." });
-    } finally {
-        await mongoClient.close();
     }
 });
 
-// La ruta /events/count y el resto del archivo no cambian
-// ...
+// RUTA PARA CONTAR EVENTOS
+app.get('/events/count', async (req, res) => {
+    try {
+        const eventsCollection = db.collection("events");
+        const todayString = new Date().toISOString().split('T')[0];
+        const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
+        res.json({ total: count });
+    } catch (error) {
+        console.error("Error al contar eventos:", error);
+        res.status(500).json({ error: "Error interno del servidor." });
+    }
+});
 
+
+// --- FUNCIÓN PARA INICIAR EL SERVIDOR ---
+async function startServer() {
+    try {
+        // Conectamos al iniciar
+        await mongoClient.connect();
+        console.log("Conectado a MongoDB correctamente.");
+        db = mongoClient.db("DuendeDB"); // Asignamos la instancia de la BD a la variable global
+
+        // Iniciamos el servidor Express
+        app.listen(port, () => {
+            console.log(`Servidor escuchando en http://localhost:${port}`);
+        });
+    } catch (error) {
+        console.error("No se pudo conectar a MongoDB o iniciar el servidor:", error);
+        process.exit(1); // Salimos si no podemos conectar a la BD
+    }
+}
+
+// --- INICIO ---
 startServer();

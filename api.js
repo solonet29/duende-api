@@ -87,6 +87,56 @@ app.get('/events/count', async (req, res) => {
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
+// NUEVA RUTA PARA EL PLANIFICADOR DE VIAJES
+app.post('/api/trip-planner', async (req, res) => {
+    const { destination, startDate, endDate } = req.body;
+
+    if (!destination || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Faltan datos para el plan de viaje.' });
+    }
+
+    try {
+        // 1. Buscar eventos en la base de datos para esas fechas y destino
+        const eventsCollection = db.collection("events");
+        const filter = {
+            city: { $regex: new RegExp(destination, 'i') },
+            date: { $gte: startDate, $lte: endDate }
+        };
+        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
+
+        if (events.length === 0) {
+            return res.json({ text: "¡Qué pena! No se han encontrado eventos de flamenco para estas fechas y destino. Te sugiero probar con otro rango de fechas o explorar peñas flamencas y tablaos locales en la ciudad." });
+        }
+
+        const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
+
+        // 2. Crear el prompt para Gemini con la lista de eventos
+        const tripPrompt = `Eres un experto agente de viajes especializado en rutas de flamenco por Andalucía. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. A continuación, te proporciono una lista de los espectáculos de flamenco disponibles durante su estancia:\n\n${eventList}\n\nTu tarea es crear un itinerario de viaje optimizado, día por día. Sugiere a qué espectáculo ir cada noche para aprovechar al máximo el viaje. Si hay días sin espectáculos, sugiere actividades culturales relacionadas con el flamenco (visitar peñas, museos, barrios históricos, etc.). Para cada recomendación de un lugar, envuelve su nombre entre corchetes, así: [Nombre del Lugar]. El tono debe ser amigable y apasionado. La respuesta debe estar en español.`;
+
+        // 3. Llamar a la API de Gemini
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+        const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
+        const geminiResponse = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!geminiResponse.ok) {
+            throw new Error('La IA no pudo generar el plan de viaje.');
+        }
+
+        const data = await geminiResponse.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        // 4. Devolver el plan al frontend
+        res.status(200).json({ text: text });
+
+    } catch (error) {
+        console.error("Error en el planificador de viajes:", error);
+        res.status(500).json({ error: "Error interno del servidor." });
+    }
+});
 
 // CORRECCIÓN: La ruta es '/gemini', sin '/api'
 app.post('/gemini', async (req, res) => {

@@ -21,11 +21,15 @@ db = mongoClient.db("DuendeDB");
 console.log("Conectado a MongoDB.");
 
 // --- MIDDLEWARE ---
+// --- MIDDLEWARE ---
 const allowedOrigins = [
     'https://duende-frontend.vercel.app', 
-    'https://buscador.afland.es'
-    // Puedes quitar localhost para producción
+    'https://buscador.afland.es',
+    'http://localhost:3000'
 ];
+
+app.use(cors({ origin: allowedOrigins }));
+app.use(express.json());
 const corsOptions = {
   origin: function (origin, callback) {
     if (!origin || allowedOrigins.indexOf(origin) !== -1) {

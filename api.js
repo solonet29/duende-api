@@ -1,5 +1,3 @@
-// Contenido del archivo: duende-api/api.js
-
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -14,6 +12,7 @@ const app = express();
 const mongoClient = new MongoClient(MONGO_URI);
 let db;
 
+// Conectar a la base de datos una sola vez al inicio
 await mongoClient.connect();
 db = mongoClient.db("DuendeDB");
 console.log("Conectado a MongoDB.");
@@ -30,7 +29,7 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// CORRECCIÓN: La ruta es '/events', sin '/api'
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
     const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
     
@@ -43,12 +42,27 @@ app.get('/events', async (req, res) => {
             date: { $gte: today.toISOString().split('T')[0] }
         };
 
-        if (city) { /* ... Lógica de filtros ... */ }
-        if (country) { /* ... Lógica de filtros ... */ }
-        if (artist) { /* ... Lógica de filtros ... */ }
-        if (dateFrom) { /* ... Lógica de filtros ... */ }
-        if (dateTo) { /* ... Lógica de filtros ... */ }
-        if (timeframe === 'week' && !dateTo) { /* ... Lógica de filtros ... */ }
+        if (city) {
+            const cityRegex = new RegExp(city, 'i');
+            filter.$or = [ { city: cityRegex }, { provincia: cityRegex } ];
+        }
+        if (country) {
+            filter.country = { $regex: new RegExp(`^${country}$`, 'i') };
+        }
+        if (artist) {
+            filter.artist = { $regex: new RegExp(artist, 'i') };
+        }
+        if (dateFrom) {
+            filter.date.$gte = dateFrom;
+        }
+        if (dateTo) {
+            filter.date.$lte = dateTo;
+        }
+        if (timeframe === 'week' && !dateTo) {
+            const nextWeek = new Date(today);
+            nextWeek.setDate(today.getDate() + 7);
+            filter.date.$lte = nextWeek.toISOString().split('T')[0];
+        }
         if (search) {
             filter.$text = { $search: search };
         }
@@ -75,7 +89,7 @@ app.get('/events', async (req, res) => {
     }
 });
 
-// CORRECCIÓN: La ruta es '/events/count', sin '/api'
+// RUTA PARA CONTAR EVENTOS
 app.get('/events/count', async (req, res) => {
     try {
         const eventsCollection = db.collection("events");
@@ -87,58 +101,8 @@ app.get('/events/count', async (req, res) => {
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
-// NUEVA RUTA PARA EL PLANIFICADOR DE VIAJES
-app.post('/api/trip-planner', async (req, res) => {
-    const { destination, startDate, endDate } = req.body;
 
-    if (!destination || !startDate || !endDate) {
-        return res.status(400).json({ error: 'Faltan datos para el plan de viaje.' });
-    }
-
-    try {
-        // 1. Buscar eventos en la base de datos para esas fechas y destino
-        const eventsCollection = db.collection("events");
-        const filter = {
-            city: { $regex: new RegExp(destination, 'i') },
-            date: { $gte: startDate, $lte: endDate }
-        };
-        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
-
-        if (events.length === 0) {
-            return res.json({ text: "¡Qué pena! No se han encontrado eventos de flamenco para estas fechas y destino. Te sugiero probar con otro rango de fechas o explorar peñas flamencas y tablaos locales en la ciudad." });
-        }
-
-        const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
-
-        // 2. Crear el prompt para Gemini con la lista de eventos
-        const tripPrompt = `Eres un experto agente de viajes especializado en rutas de flamenco por Andalucía. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. A continuación, te proporciono una lista de los espectáculos de flamenco disponibles durante su estancia:\n\n${eventList}\n\nTu tarea es crear un itinerario de viaje optimizado, día por día. Sugiere a qué espectáculo ir cada noche para aprovechar al máximo el viaje. Si hay días sin espectáculos, sugiere actividades culturales relacionadas con el flamenco (visitar peñas, museos, barrios históricos, etc.). Para cada recomendación de un lugar, envuelve su nombre entre corchetes, así: [Nombre del Lugar]. El tono debe ser amigable y apasionado. La respuesta debe estar en español.`;
-
-        // 3. Llamar a la API de Gemini
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-        const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
-        const geminiResponse = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!geminiResponse.ok) {
-            throw new Error('La IA no pudo generar el plan de viaje.');
-        }
-
-        const data = await geminiResponse.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        // 4. Devolver el plan al frontend
-        res.status(200).json({ text: text });
-
-    } catch (error) {
-        console.error("Error en el planificador de viajes:", error);
-        res.status(500).json({ error: "Error interno del servidor." });
-    }
-});
-
-// CORRECCIÓN: La ruta es '/gemini', sin '/api'
+// RUTA PARA "PLANEAR NOCHE" CON GEMINI
 app.post('/gemini', async (req, res) => {
     const { prompt } = req.body;
     if (!prompt) {
@@ -167,4 +131,52 @@ app.post('/gemini', async (req, res) => {
     }
 });
 
+// RUTA PARA EL PLANIFICADOR DE VIAJES
+app.post('/trip-planner', async (req, res) => {
+    const { destination, startDate, endDate } = req.body;
+
+    if (!destination || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Faltan datos para el plan de viaje.' });
+    }
+
+    try {
+        const eventsCollection = db.collection("events");
+        const filter = {
+            city: { $regex: new RegExp(destination, 'i') },
+            date: { $gte: startDate, $lte: endDate }
+        };
+        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
+
+        if (events.length === 0) {
+            return res.json({ text: "¡Qué pena! No se han encontrado eventos de flamenco para estas fechas y destino. Te sugiero probar con otro rango de fechas o explorar peñas flamencas y tablaos locales en la ciudad." });
+        }
+
+        const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
+
+        const tripPrompt = `Eres un experto agente de viajes especializado en rutas de flamenco por Andalucía. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. A continuación, te proporciono una lista de los espectáculos de flamenco disponibles durante su estancia:\n\n${eventList}\n\nTu tarea es crear un itinerario de viaje optimizado, día por día. Sugiere a qué espectáculo ir cada noche. Si hay días sin espectáculos, sugiere actividades culturales relacionadas con el flamenco (visitar peñas, museos, etc.). Para cada recomendación de un lugar, envuelve su nombre entre corchetes, así: [Nombre del Lugar]. El tono debe ser amigable y apasionado. La respuesta debe estar en español.`;
+
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
+        const geminiResponse = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!geminiResponse.ok) {
+            throw new Error('La IA no pudo generar el plan de viaje.');
+        }
+
+        const data = await geminiResponse.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        res.status(200).json({ text: text });
+
+    } catch (error) {
+        console.error("Error en el planificador de viajes:", error);
+        res.status(500).json({ error: "Error interno del servidor." });
+    }
+});
+
+// Exporta la app para que Vercel la pueda usar
 export default app;

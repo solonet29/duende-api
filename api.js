@@ -37,7 +37,7 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (REFINADA)
 app.get('/events', async (req, res) => {
     const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
     
@@ -46,77 +46,73 @@ app.get('/events', async (req, res) => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
-        const filterConditions = [];
-
-        filterConditions.push({ date: { $gte: today.toISOString().split('T')[0] } });
+        // Objeto para el filtro principal ($match)
+        const filter = {
+            date: { $gte: today.toISOString().split('T')[0] }
+        };
 
         if (city) {
             const cityRegex = new RegExp(city, 'i');
-            filterConditions.push({
-                $or: [
-                    { city: cityRegex },
-                    { provincia: cityRegex }
-                ]
-            });
+            filter.$or = [ { city: cityRegex }, { provincia: cityRegex } ];
         }
-        
         if (country) {
-            filterConditions.push({ country: { $regex: new RegExp(`^${country}$`, 'i') } });
+            filter.country = { $regex: new RegExp(`^${country}$`, 'i') };
         }
-
         if (artist) {
-            filterConditions.push({ artist: { $regex: new RegExp(artist, 'i') } });
+            filter.artist = { $regex: new RegExp(artist, 'i') };
         }
         if (dateFrom) {
-            filterConditions[0].date.$gte = dateFrom;
+            filter.date.$gte = dateFrom;
         }
         if (dateTo) {
-            filterConditions[0].date.$lte = dateTo;
+            filter.date.$lte = dateTo;
         }
-        
         if (timeframe === 'week' && !dateTo) {
             const nextWeek = new Date(today);
             nextWeek.setDate(today.getDate() + 7);
-            filterConditions[0].date.$lte = nextWeek.toISOString().split('T')[0];
+            filter.date.$lte = nextWeek.toISOString().split('T')[0];
         }
 
-        // --- LÓGICA DE BÚSQUEDA GENERAL CORREGIDA ---
+        // MEJORA 1: Usamos el índice de texto para la búsqueda general.
         if (search) {
-            const searchRegex = new RegExp(search, 'i');
-            // Busca el término en varios campos a la vez.
-            filterConditions.push({
-                $or: [
-                    { name: searchRegex },
-                    { artist: searchRegex },
-                    { description: searchRegex },
-                    { city: searchRegex },
-                    { venue: searchRegex }
-                ]
-            });
+            filter.$text = { $search: search };
         }
 
-        const finalFilter = filterConditions.length > 1 ? { $and: filterConditions } : filterConditions[0] || {};
-        
-        console.log("Ejecutando consulta con filtro:", JSON.stringify(finalFilter, null, 2));
-        
-        const events = await eventsCollection.find(finalFilter).sort({ date: 1 }).toArray();
-
-        const uniqueEvents = new Map();
-        events.forEach(event => {
-            const key = `${event.artist?.toLowerCase().trim()}|${event.date}|${event.time}`;
-            const existingEvent = uniqueEvents.get(key);
-            if (!existingEvent) {
-                uniqueEvents.set(key, event);
-            } else {
-                if (!existingEvent.sourceURL && event.sourceURL) {
-                    uniqueEvents.set(key, event);
+        // MEJORA 2: Pipeline de Agregación para ordenar y eliminar duplicados.
+        const aggregationPipeline = [
+            // Etapa 1: Filtrar documentos con los criterios de búsqueda.
+            { $match: filter },
+            // Etapa 2: Ordenar para priorizar los mejores resultados antes de agrupar.
+            { 
+                $sort: {
+                    date: 1,      // Ordenar por fecha ascendente
+                    verified: -1, // Priorizar verificados (true antes que false)
+                    sourceURL: -1  // Priorizar los que tienen URL de fuente
                 }
-            }
-        });
+            },
+            // Etapa 3: Agrupar para eliminar duplicados.
+            {
+                $group: {
+                    // Agrupar por los campos que definen un evento único
+                    _id: { 
+                        artist: "$artist",
+                        date: "$date",
+                        time: "$time"
+                    },
+                    // Usamos $first para quedarnos con el primer documento de cada grupo,
+                    // que será el "mejor" gracias al $sort anterior.
+                    doc: { $first: "$$ROOT" }
+                }
+            },
+            // Etapa 4: Devolver solo el documento original sin la estructura de agrupación.
+            { $replaceRoot: { newRoot: "$doc" } },
+            // Etapa 5: Ordenar el resultado final de nuevo por fecha.
+            { $sort: { date: 1 } }
+        ];
+        
+        const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
 
-        const filteredEvents = Array.from(uniqueEvents.values());
-
-        res.json(filteredEvents);
+        res.json(events);
 
     } catch (error) {
         console.error("Error al buscar eventos:", error);

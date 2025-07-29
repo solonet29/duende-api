@@ -104,15 +104,37 @@ app.get('/events/count', async (req, res) => {
 
 // RUTA PARA "PLANEAR NOCHE" CON GEMINI
 app.post('/gemini', async (req, res) => {
-    const { prompt } = req.body;
-    if (!prompt) {
-        return res.status(400).json({ error: 'Falta el prompt en la petición' });
+    const { event } = req.body; // Recibimos el objeto 'event' completo
+    if (!event) {
+        return res.status(400).json({ error: 'Faltan los datos del evento' });
     }
+    
+    // CORRECCIÓN: Prompt mejorado para mayor precisión
+    const prompt = `Actúa como un aficionado al flamenco con 'duende', un guía local apasionado que comparte secretos. Tu tarea es crear un plan detallado y evocador para una noche de flamenco inolvidable en ${event.city} centrada en el espectáculo de ${event.artist} en ${event.venue}.
+
+Quiero que la respuesta siga ESTRICTAMENTE esta estructura de secciones con Markdown:
+
+### Un Pellizco de Sabiduría
+Un dato curioso o histórico sobre el artista, el palo flamenco principal del espectáculo o el lugar. Algo que nadie más sabe.
+
+### Calentando Motores: Antes del Espectáculo
+Recomienda 1-2 bares de tapas o bodegas cercanas al lugar. Para cada uno, indica el ambiente y un rango de precio estimado usando €, €€ o €€€.
+
+### El Templo del Duende: El Espectáculo
+Describe brevemente el estilo del artista (${event.artist}). **Usa la descripción del evento ('${event.description}') para identificar si es cantaor, bailaor, guitarrista, etc., y menciónalo**. Describe también qué se puede esperar del ambiente del tablao (${event.venue}).
+
+### Para Alargar la Magia: Después del Espectáculo
+Sugiere un lugar cercano para tomar una última copa, explicando por qué encaja con la atmósfera de la noche.
+
+### Consejos Prácticos
+Una lista corta con 2-3 consejos útiles: ¿Necesita reserva? ¿Código de vestimenta? ¿Mejor forma de llegar?
+
+Para cada lugar recomendado, envuelve su nombre entre corchetes: [Nombre del Lugar].
+Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no sean demasiado largos para facilitar la lectura en móvil.`;
+
     try {
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-        const payload = {
-            contents: [{ role: "user", parts: [{ text: prompt }] }]
-        };
+        const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
         const geminiResponse = await fetch(geminiUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -165,7 +187,7 @@ Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE est
 5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
 
 Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes [Nombre del Lugar].`;
-
+        
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
         const geminiResponse = await fetch(geminiUrl, {

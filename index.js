@@ -210,7 +210,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
-
+// Forzando un nuevo despliegue en Vercel
 // RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA
 app.post('/api/log-search', async (req, res) => {
     // ... todo el código de la función ...

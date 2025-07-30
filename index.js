@@ -2,15 +2,23 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
+// AÑADIDO: Importamos el cliente de Supabase
+import { createClient } from '@supabase/supabase-js';
 
 // --- CONFIGURACIÓN ---
-const { MONGO_URI, GEMINI_API_KEY } = process.env;
+const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env; // AÑADIDO: Leemos las variables de Supabase
 if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');
 if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
 const mongoClient = new MongoClient(MONGO_URI);
 let db;
+
+// AÑADIDO: Creamos el cliente de Supabase de forma segura
+const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+if (!supabase) {
+    console.warn("Supabase analytics is disabled. Environment variables are not set.");
+}
 
 // Conectar a la base de datos una sola vez al inicio
 await mongoClient.connect();
@@ -31,86 +39,87 @@ app.use(express.json());
 
 // RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
+    // ... tu código de búsqueda de eventos (sin cambios) ...
     const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
-    
-    try {
-        const eventsCollection = db.collection("events");
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+    
+    try {
+        const eventsCollection = db.collection("events");
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
 
-        const filter = {
-            date: { $gte: today.toISOString().split('T')[0] }
-        };
+        const filter = {
+            date: { $gte: today.toISOString().split('T')[0] }
+        };
 
-        if (city) {
-            const cityRegex = new RegExp(city, 'i');
-            filter.$or = [ { city: cityRegex }, { provincia: cityRegex } ];
-        }
-        if (country) {
-            filter.country = { $regex: new RegExp(`^${country}$`, 'i') };
-        }
-        if (artist) {
-            filter.artist = { $regex: new RegExp(artist, 'i') };
-        }
-        if (dateFrom) {
-            filter.date.$gte = dateFrom;
-        }
-        if (dateTo) {
-            filter.date.$lte = dateTo;
-        }
-        if (timeframe === 'week' && !dateTo) {
-            const nextWeek = new Date(today);
-            nextWeek.setDate(today.getDate() + 7);
-            filter.date.$lte = nextWeek.toISOString().split('T')[0];
-        }
-        if (search) {
-            filter.$text = { $search: search };
-        }
+        if (city) {
+            const cityRegex = new RegExp(city, 'i');
+            filter.$or = [ { city: cityRegex }, { provincia: cityRegex } ];
+        }
+        if (country) {
+            filter.country = { $regex: new RegExp(`^${country}$`, 'i') };
+        }
+        if (artist) {
+            filter.artist = { $regex: new RegExp(artist, 'i') };
+        }
+        if (dateFrom) {
+            filter.date.$gte = dateFrom;
+        }
+        if (dateTo) {
+            filter.date.$lte = dateTo;
+        }
+        if (timeframe === 'week' && !dateTo) {
+            const nextWeek = new Date(today);
+            nextWeek.setDate(today.getDate() + 7);
+            filter.date.$lte = nextWeek.toISOString().split('T')[0];
+        }
+        if (search) {
+            filter.$text = { $search: search };
+        }
 
-        const aggregationPipeline = [
-            { $match: filter },
-            { $sort: { date: 1, verified: -1, sourceURL: -1 } },
-            {
-                $group: {
-                    _id: { artist: "$artist", date: "$date", time: "$time" },
-                    doc: { $first: "$$ROOT" }
-                }
-            },
-            { $replaceRoot: { newRoot: "$doc" } },
-            { $sort: { date: 1 } }
-        ];
-        
-        const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
-        res.json(events);
+        const aggregationPipeline = [
+            { $match: filter },
+            { $sort: { date: 1, verified: -1, sourceURL: -1 } },
+            {
+                $group: {
+                    _id: { artist: "$artist", date: "$date", time: "$time" },
+                    doc: { $first: "$$ROOT" }
+                }
+            },
+            { $replaceRoot: { newRoot: "$doc" } },
+            { $sort: { date: 1 } }
+        ];
+        
+        const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
+        res.json(events);
 
-    } catch (error) {
-        console.error("Error al buscar eventos:", error);
-        res.status(500).json({ error: "Error interno del servidor." });
-    }
+    } catch (error) {
+        console.error("Error al buscar eventos:", error);
+        res.status(500).json({ error: "Error interno del servidor." });
+    }
 });
 
 // RUTA PARA CONTAR EVENTOS
 app.get('/events/count', async (req, res) => {
+    // ... tu código de contar eventos (sin cambios) ...
     try {
-        const eventsCollection = db.collection("events");
-        const todayString = new Date().toISOString().split('T')[0];
-        const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
-        res.json({ total: count });
-    } catch (error) {
-        console.error("Error al contar eventos:", error);
-        res.status(500).json({ error: "Error interno del servidor." });
-    }
+        const eventsCollection = db.collection("events");
+        const todayString = new Date().toISOString().split('T')[0];
+        const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
+        res.json({ total: count });
+    } catch (error) {
+        console.error("Error al contar eventos:", error);
+        res.status(500).json({ error: "Error interno del servidor." });
+    }
 });
 
 // RUTA PARA "PLANEAR NOCHE" CON GEMINI
 app.post('/gemini', async (req, res) => {
-    const { event } = req.body; // Recibimos el objeto 'event' completo
-    if (!event) {
-        return res.status(400).json({ error: 'Faltan los datos del evento' });
-    }
-    
-    // CORRECCIÓN: Prompt mejorado para mayor precisión
-    const prompt = `Actúa como un aficionado al flamenco con 'duende', un guía local apasionado que comparte secretos. Tu tarea es crear un plan detallado y evocador para una noche de flamenco inolvidable en ${event.city} centrada en el espectáculo de ${event.artist} en ${event.venue}.
+    // ... tu código de Gemini (sin cambios) ...
+    const { event } = req.body;
+    if (!event) {
+        return res.status(400).json({ error: 'Faltan los datos del evento' });
+    }
+    const prompt = `Actúa como un aficionado al flamenco con 'duende', un guía local apasionado que comparte secretos. Tu tarea es crear un plan detallado y evocador para una noche de flamenco inolvidable en ${event.city} centrada en el espectáculo de ${event.artist} en ${event.venue}.
 
 Quiero que la respuesta siga ESTRICTAMENTE esta estructura de secciones con Markdown:
 
@@ -132,88 +141,121 @@ Una lista corta con 2-3 consejos útiles: ¿Necesita reserva? ¿Código de vesti
 Para cada lugar recomendado, envuelve su nombre entre corchetes: [Nombre del Lugar].
 Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no sean demasiado largos para facilitar la lectura en móvil.`;
 
-    try {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-        const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
-        const geminiResponse = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-        if (!geminiResponse.ok) {
-            console.error('Error desde la API de Gemini:', await geminiResponse.text());
-            return res.status(geminiResponse.status).json({ error: 'Error al contactar la API de Gemini' });
-        }
-        const data = await geminiResponse.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        res.status(200).json({ text: text });
-    } catch (error) {
-        console.error('Error interno del servidor en la ruta /gemini:', error);
-        res.status(500).json({ error: 'Error interno del servidor' });
-    }
+    try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+        const geminiResponse = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!geminiResponse.ok) {
+            console.error('Error desde la API de Gemini:', await geminiResponse.text());
+            return res.status(geminiResponse.status).json({ error: 'Error al contactar la API de Gemini' });
+        }
+        const data = await geminiResponse.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        res.status(200).json({ text: text });
+    } catch (error) {
+        console.error('Error interno del servidor en la ruta /gemini:', error);
+        res.status(500).json({ error: 'Error interno del servidor' });
+    }
 });
 
 // RUTA PARA EL PLANIFICADOR DE VIAJES
 app.post('/trip-planner', async (req, res) => {
+    // ... tu código de trip-planner (sin cambios) ...
     const { destination, startDate, endDate } = req.body;
 
-    if (!destination || !startDate || !endDate) {
-        return res.status(400).json({ error: 'Faltan datos para el plan de viaje.' });
-    }
+    if (!destination || !startDate || !endDate) {
+        return res.status(400).json({ error: 'Faltan datos para el plan de viaje.' });
+    }
 
-    try {
-        const eventsCollection = db.collection("events");
-        const filter = {
-            city: { $regex: new RegExp(destination, 'i') },
-            date: { $gte: startDate, $lte: endDate }
-        };
-        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
+    try {
+        const eventsCollection = db.collection("events");
+        const filter = {
+            city: { $regex: new RegExp(destination, 'i') },
+            date: { $gte: startDate, $lte: endDate }
+        };
+        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
 
-        if (events.length === 0) {
-            return res.json({ text: "¡Qué pena! No se han encontrado eventos de flamenco para estas fechas y destino. Te sugiero probar con otro rango de fechas o explorar peñas flamencas y tablaos locales en la ciudad." });
-        }
+        if (events.length === 0) {
+            return res.json({ text: "¡Qué pena! No se han encontrado eventos de flamenco para estas fechas y destino. Te sugiero probar con otro rango de fechas o explorar peñas flamencas y tablaos locales en la ciudad." });
+        }
 
-        const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
+        const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
 
-        const tripPrompt = `Actúa como el mejor planificador de viajes de flamenco de Andalucía. Eres amigable, experto y apasionado. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. Su lista de espectáculos disponibles es:
+        const tripPrompt = `Actúa como el mejor planificador de viajes de flamenco de Andalucía. Eres amigable, experto y apasionado. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. Su lista de espectáculos disponibles es:
 ${eventList}
 
 Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE estas reglas:
 
-1.  **Estructura por Días:** Organiza el plan día por día.
-2.  **Títulos Temáticos:** Dale a cada día un título temático y evocador (ej. "Martes: Inmersión en el Sacromonte", "Miércoles: Noche de Cante Jondo").
-3.  **Días con Eventos:** Haz que el espectáculo de la lista sea el punto culminante del día, sugiriendo actividades que lo complementen.
-4.  **Días Libres:** Para los días sin espectáculos, ofrece dos alternativas claras: un "Plan A" (una actividad cultural principal como visitar un museo, un barrio emblemático o una tienda de guitarras) y un "Plan B" (una opción más relajada o diferente, como una clase de compás o un lugar con vistas para relajarse).
-5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
+1.  **Estructura por Días:** Organiza el plan día por día.
+2.  **Títulos Temáticos:** Dale a cada día un título temático y evocador (ej. "Martes: Inmersión en el Sacromonte", "Miércoles: Noche de Cante Jondo").
+3.  **Días con Eventos:** Haz que el espectáculo de la lista sea el punto culminante del día, sugiriendo actividades que lo complementen.
+4.  **Días Libres:** Para los días sin espectáculos, ofrece dos alternativas claras: un "Plan A" (una actividad cultural principal como visitar un museo, un barrio emblemático o una tienda de guitarras) y un "Plan B" (una opción más relajada o diferente, como una clase de compás o un lugar con vistas para relajarse).
+5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
 
 Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes [Nombre del Lugar].`;
+        
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
+        const geminiResponse = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!geminiResponse.ok) {
+            throw new Error('La IA no pudo generar el plan de viaje.');
+        }
+
+        const data = await geminiResponse.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        res.status(200).json({ text: text });
+
+    } catch (error) {
+        console.error("Error en el planificador de viajes:", error);
+        res.status(500).json({ error: "Error interno del servidor." });
+    }
+});
+
+// --- NUEVAS RUTAS DE ANALÍTICAS ---
+
+// RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA (CORREGIDA SIN /api)
+app.post('/log-search', async (req, res) => {
+    if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
+
+    try {
+        const { searchTerm, filtersApplied, resultsCount, sessionId, geo } = req.body;
+        if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
+
+        await supabase.from('search_events').insert([{ 
+            search_term: searchTerm, 
+            filters_applied: filtersApplied,
+            results_count: resultsCount,
+            session_id: sessionId,
+            geo: geo,
+        }]);
         
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-        const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
-        const geminiResponse = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!geminiResponse.ok) {
-            throw new Error('La IA no pudo generar el plan de viaje.');
-        }
-
-        const data = await geminiResponse.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        res.status(200).json({ text: text });
-
-    } catch (error) {
-        console.error("Error en el planificador de viajes:", error);
-        res.status(500).json({ error: "Error interno del servidor." });
+        return res.status(201).json({ success: true });
+    } catch (e) {
+        console.error('Log search error:', e.message);
+        return res.status(200).json({ success: false });
     }
 });
-// Forzando un nuevo despliegue en Vercel
-// RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA
-app.post('/log-search', async (req, res) => {
-    // ... todo el código de la función ...
+
+// RUTA DE DEPURACIÓN TEMPORAL PARA VERIFICAR VARIABLES DE ENTORNO
+app.get('/debug-env', (req, res) => {
+    const varsStatus = {
+        supabaseUrlExists: !!process.env.SUPABASE_URL,
+        supabaseAnonKeyExists: !!process.env.SUPABASE_ANON_KEY,
+        geminiApiKeyExists: !!process.env.GEMINI_API_KEY,
+        mongoUriExists: !!process.env.MONGO_URI
+    };
+    res.status(200).json(varsStatus);
 });
+
 // Exporta la app para que Vercel la pueda usar
 export default app;

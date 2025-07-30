@@ -212,7 +212,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 });
 // Forzando un nuevo despliegue en Vercel
 // RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA
-app.post('/api/log-search', async (req, res) => {
+app.post('/log-search', async (req, res) => {
     // ... todo el código de la función ...
 });
 // Exporta la app para que Vercel la pueda usar

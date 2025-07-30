@@ -1,5 +1,5 @@
-// Contenido para database.js
-const { MongoClient } = require('mongodb');
+// Contenido corregido para database.js
+import { MongoClient } from 'mongodb';
 
 // Tomaremos la URL de conexión de las variables de entorno de Render
 const uri = process.env.MONGODB_URI; 
@@ -22,4 +22,5 @@ async function connectDB() {
     }
 }
 
-module.exports = { connectDB, client };
+// Usamos 'export' en lugar de 'module.exports'
+export { connectDB, client };

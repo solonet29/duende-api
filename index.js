@@ -6,6 +6,11 @@ import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
 
+// ---- INICIO DEL BLOQUE DE DEPURACIÓN ----
+console.log("--- VERIFICANDO VARIABLES DE ENTORNO ---");
+console.log("La MONGO_URI que estoy usando es:", process.env.MONGO_URI);
+console.log("-----------------------------------------");
+// ---- FIN DEL BLOQUE DE DEPURACIÓN ----
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
 if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');

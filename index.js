@@ -281,6 +281,6 @@ app.post('/log-interaction', async (req, res) => {
     }
 });
 
-
+// FORZANDO A VERCEL A DESPERTAR
 // Exporta la app para que Vercel la pueda usar
 export default app;

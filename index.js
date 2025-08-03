@@ -5,7 +5,9 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
-import UAParser from 'ua-parser-js'; // <-- Con la 'U' y 'A' y 'P' en mayúscula
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const UAParser = require('ua-parser-js');
 
 
 // --- CONFIGURACIÓN ---

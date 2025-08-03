@@ -27,29 +27,17 @@ db = mongoClient.db("DuendeDB");
 console.log("Conectado a MongoDB.");
 
 // --- MIDDLEWARE ---
-// --- MIDDLEWARE ---
+
+import cors from 'cors'; // Asegúrate de que esta línea esté al principio del archivo
+
 const allowedOrigins = [
     'https://duende-frontend.vercel.app', 
     'https://buscador.afland.es',
     'http://localhost:3000'
 ];
 
-const corsOptions = {
-    origin: function (origin, callback) {
-        // Si la petición no tiene un 'origin' (ej. una herramienta como Postman) 
-        // o si el 'origin' está en nuestra lista de permitidos, la aceptamos.
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            // Si el 'origin' no está en la lista, lo rechazamos.
-            console.error(`CORS Error: El origen ${origin} no está permitido.`);
-            callback(new Error('Origen no permitido por CORS'));
-        }
-    }
-};
-
-// Usamos las nuevas opciones de CORS
-app.use(cors(corsOptions));
+// Usamos una configuración de CORS más directa
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 // --- RUTAS DE LA API ---

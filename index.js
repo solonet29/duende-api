@@ -5,7 +5,8 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
-import uaparser from 'ua-parser-js'; // <-- LIBRERÍA DE PARSEO
+import UAParser from 'ua-parser-js'; // <-- Con la 'U' y 'A' y 'P' en mayúscula
+
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -242,7 +243,7 @@ app.post('/log-search', async (req, res) => {
         // --- INICIO: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const ua = uaparser(uaString);
+        const ua = UAParser(uaString);
         
         const eventData = {
             // Datos originales
@@ -291,7 +292,7 @@ app.post('/log-interaction', async (req, res) => {
         // --- INICIO: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const ua = uaparser(uaString);
+        const ua = UAParser(uaString);
 
         const eventData = {
             // Datos originales

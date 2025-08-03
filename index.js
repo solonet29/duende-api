@@ -1,16 +1,12 @@
-// index.js - VERSIÓN 100% COMPLETA Y DEFINITIVA
+// index.js - VERSIÓN 100% COMPLETA Y DEFINITIVA (CON ENRIQUECIMIENTO)
 
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
+import uaparser from 'ua-parser-js'; // <-- LIBRERÍA DE PARSEO
 
-// ---- INICIO DEL BLOQUE DE DEPURACIÓN ----
-console.log("--- VERIFICANDO VARIABLES DE ENTORNO ---");
-console.log("La MONGO_URI que estoy usando es:", process.env.MONGO_URI);
-console.log("-----------------------------------------");
-// ---- FIN DEL BLOQUE DE DEPURACIÓN ----
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
 if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');
@@ -42,7 +38,7 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LÓGICA MEJORADA)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
     const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
     
@@ -76,8 +72,6 @@ app.get('/events', async (req, res) => {
             nextWeek.setDate(today.getDate() + 7);
             filter.date.$lte = nextWeek.toISOString().split('T')[0];
         }
-
-        // ---- BLOQUE DE BÚSQUEDA CORREGIDO ----
         if (search) {
             const searchTerms = search.split(' ').map(term => `"${term}"`).join(' ');
             filter.$text = { 
@@ -85,8 +79,7 @@ app.get('/events', async (req, res) => {
                 $language: 'spanish'
             };
         }
-        // ------------------------------------
-
+        
         const aggregationPipeline = [
             { $match: filter },
             { $sort: { date: 1, verified: -1, sourceURL: -1 } },
@@ -198,7 +191,7 @@ ${eventList}
 
 Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE estas reglas:
 
-1.  **Estructura por Días:** Organiza el plan día por día.
+1.  **Estructura por Días:** Organiza el plan por día.
 2.  **Títulos Temáticos:** Dale a cada día un título temático y evocador (ej. "Martes: Inmersión en el Sacromonte", "Miércoles: Noche de Cante Jondo").
 3.  **Días con Eventos:** Haz que el espectáculo de la lista sea el punto culminante del día, sugiriendo actividades que lo complementen.
 4.  **Días Libres:** Para los días sin espectáculos, ofrece dos alternativas claras: un "Plan A" (una actividad cultural principal como visitar un museo, un barrio emblemático o una tienda de guitarras) y un "Plan B" (una opción más relajada o diferente, como una clase de compás o un lugar con vistas para relajarse).
@@ -230,24 +223,47 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 });
 
 
-// --- RUTAS DE ANALÍTICAS ---
+// --- RUTAS DE ANALÍTICAS (MODIFICADAS CON ENRIQUECIMIENTO) ---
 
 // RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
-
+    
+    const startTime = Date.now();
     try {
-        const { searchTerm, filtersApplied, resultsCount, sessionId, geo } = req.body;
+        const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
 
-        await supabase.from('search_events').insert([{ 
-            search_term: searchTerm, 
+        // --- INICIO: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
+        const headers = req.headers;
+        const uaString = headers['user-agent'];
+        const ua = uaparser(uaString);
+        
+        const eventData = {
+            // Datos originales
+            search_term: searchTerm,
             filters_applied: filtersApplied,
             results_count: resultsCount,
             session_id: sessionId,
-            geo: geo,
-            interaction_type: 'search'
-        }]);
+            interaction_type: 'search',
+            
+            // Nuevos datos enriquecidos
+            status: 'success',
+            processing_time_ms: Date.now() - startTime,
+            user_agent: uaString,
+            device_type: ua.device.type || 'desktop',
+            os: ua.os.name,
+            browser: ua.browser.name,
+            country: headers['x-vercel-ip-country'] || null,
+            referrer: headers['referer'] || null,
+            geo: {
+                city: headers['x-vercel-ip-city'] || null,
+                region: headers['x-vercel-ip-country-region'] || null
+            }
+        };
+        // --- FIN: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
+
+        await supabase.from('search_events').insert([eventData]);
         
         return res.status(201).json({ success: true });
     } catch (e) {
@@ -256,21 +272,45 @@ app.post('/log-search', async (req, res) => {
     }
 });
 
-// --- NUEVA RUTA PARA REGISTRAR CLICS EN BOTONES ---
+// RUTA PARA REGISTRAR CLICS EN BOTONES
 app.post('/log-interaction', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
+    const startTime = Date.now();
     try {
         const { interaction_type, session_id, event_details } = req.body;
         if (!interaction_type || !session_id) {
             return res.status(400).json({ error: 'interaction_type and session_id are required' });
         }
 
-        const { error } = await supabase.from('search_events').insert([{
+        // --- INICIO: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
+        const headers = req.headers;
+        const uaString = headers['user-agent'];
+        const ua = uaparser(uaString);
+
+        const eventData = {
+            // Datos originales
             session_id: session_id,
             interaction_type: interaction_type,
-            filters_applied: event_details 
-        }]);
+            filters_applied: event_details,
+
+            // Nuevos datos enriquecidos
+            status: 'success',
+            processing_time_ms: Date.now() - startTime,
+            user_agent: uaString,
+            device_type: ua.device.type || 'desktop',
+            os: ua.os.name,
+            browser: ua.browser.name,
+            country: headers['x-vercel-ip-country'] || null,
+            referrer: headers['referer'] || null,
+            geo: {
+                city: headers['x-vercel-ip-city'] || null,
+                region: headers['x-vercel-ip-country-region'] || null
+            }
+        };
+        // --- FIN: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
+
+        const { error } = await supabase.from('search_events').insert([eventData]);
 
         if (error) throw error;
 
@@ -281,6 +321,5 @@ app.post('/log-interaction', async (req, res) => {
     }
 });
 
-// FORZANDO A VERCEL A DESPERTAR
 // Exporta la app para que Vercel la pueda usar
 export default app;

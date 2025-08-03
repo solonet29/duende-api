@@ -28,8 +28,6 @@ console.log("Conectado a MongoDB.");
 
 // --- MIDDLEWARE ---
 // --- MIDDLEWARE ---
-import cors from 'cors'; // Asegúrate de que esta línea esté al principio del archivo
-
 // Usamos una configuración de CORS final y explícita
 app.use(cors({
   origin: [

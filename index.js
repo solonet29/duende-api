@@ -15,7 +15,7 @@ if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
 
-// --- NUEVO PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS ---
+// --- PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS (CORREGIDO) ---
 let cachedDb = null;
 const mongoClient = new MongoClient(MONGO_URI);
 
@@ -25,16 +25,16 @@ async function connectToDatabase() {
     }
     try {
         await mongoClient.connect();
-        const db = mongoClient.db("DuendeDB");
+        const db = mongoClient.db("AFLandDB"); // CORREGIDO
         cachedDb = db;
-        console.log("Nueva conexión a MongoDB establecida y cacheada.");
+        console.log("Nueva conexión a AFLandDB establecida y cacheada.");
         return db;
     } catch (error) {
         console.error("Error al conectar a MongoDB:", error);
         throw error;
     }
 }
-// --- FIN DEL NUEVO PATRÓN DE CONEXIÓN ---
+// --- FIN DEL PATRÓN DE CONEXIÓN ---
 
 // --- MIDDLEWARE ---
 app.use(cors({
@@ -54,18 +54,18 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "2.1-serverless-con-huella", 
+        version: "3.0-final-fix", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (VERSIÓN FINAL CON ATLAS SEARCH)
+// RUTA PRINCIPAL DE BÚSqueda DE EVENTOS
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
 
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("events");
+        const eventsCollection = db.collection("eventos"); // CORREGIDO
 
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         const aggregationPipeline = [];
@@ -78,13 +78,7 @@ app.get('/events', async (req, res) => {
                         "should": [
                             { "text": { "query": search, "path": "titulo", "score": { "boost": { "value": 3 } } } },
                             { "text": { "query": search, "path": "artista", "score": { "boost": { "value": 2 } } } },
-                            {
-                                "text": {
-                                    "query": search,
-                                    "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"],
-                                    "fuzzy": { "maxEdits": 1 }
-                                }
-                            }
+                            { "text": { "query": search, "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"], "fuzzy": { "maxEdits": 1 } } }
                         ]
                     }
                 }
@@ -124,10 +118,10 @@ app.get('/events', async (req, res) => {
 
 // RUTA PARA CONTAR EVENTOS
 app.get('/events/count', async (req, res) => {
-    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.setHeader('Cache-control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("events");
+        const eventsCollection = db.collection("eventos"); // CORREGIDO
         const todayString = new Date().toISOString().split('T')[0];
         const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
         res.json({ total: count });
@@ -162,7 +156,7 @@ Sugiere un lugar cercano para tomar una última copa, explicando por qué encaja
 ### Consejos Prácticos
 Una lista corta con 2-3 consejos útiles: ¿Necesita reserva? ¿Código de vestimenta? ¿Mejor forma de llegar?
 
-Para cada lugar recomendado, envuelve su nombre entre corchetas: [Nombre del Lugar].
+Para cada lugar recomendado, envuelve su nombre entre corchetes: [Nombre del Lugar].
 Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no sean demasiado largos para facilitar la lectura en móvil.`;
 
     try {
@@ -196,7 +190,7 @@ app.post('/trip-planner', async (req, res) => {
 
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("events");
+        const eventsCollection = db.collection("eventos"); // CORREGIDO
         const filter = {
             city: { $regex: new RegExp(destination, 'i') },
             date: { $gte: startDate, $lte: endDate }
@@ -245,6 +239,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
     }
 });
 
+
 // --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
@@ -281,7 +276,7 @@ app.post('/log-search', async (req, res) => {
         await supabase.from('search_events').insert([eventData]);
         
         return res.status(201).json({ success: true });
-    } catch (e) {
+    } catch (e).
         console.error('Log search error:', e.message);
         return res.status(200).json({ success: false });
     }

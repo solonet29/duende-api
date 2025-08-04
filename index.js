@@ -24,7 +24,7 @@ if (!supabase) {
 
 // Conectar a la base de datos una sola vez al inicio
 await mongoClient.connect();
-db = mongoClient.db("DuendeDB"); // Asegúrate de que este es el nombre correcto de tu BD
+db = mongoClient.db("DuendeDB");
 console.log("Conectado a MongoDB.");
 
 // --- MIDDLEWARE ---
@@ -42,63 +42,76 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (RECONSTRUIDA PARA ATLAS SEARCH)
 app.get('/events', async (req, res) => {
-    // Definimos la cabecera para desactivar la caché de Vercel en esta ruta
-    res.setHeader('Cache-Control', 'no-store, max-age=0'); // <-- ARREGLO
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
 
-    const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
-    
     try {
+        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         const eventsCollection = db.collection("events");
+        const aggregationPipeline = [];
+
+        // 1. Etapa de Búsqueda Libre con Atlas Search (si hay 'search')
+        if (search) {
+            aggregationPipeline.push({
+                $search: {
+                    index: 'default', // Usa el índice de Atlas Search que ya tienes
+                    "compound": {
+                        "should": [
+                            {
+                                "text": {
+                                    "query": search,
+                                    "path": "titulo",
+                                    "score": { "boost": { "value": 3 } } // Damos más importancia al título
+                                }
+                            },
+                            {
+                                "text": {
+                                    "query": search,
+                                    "path": ["artista", "ciudad", "descripcion", "lugar_texto"],
+                                    "fuzzy": { "maxEdits": 1 } // Permitimos errores tipográficos
+                                }
+                            }
+                        ]
+                    }
+                }
+            });
+        }
+
+        // 2. Etapa de Filtrado (el resto de los filtros)
+        const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-
-        const filter = {
-            date: { $gte: today.toISOString().split('T')[0] }
-        };
+        matchFilter.date = { $gte: today.toISOString().split('T')[0] };
 
         if (city) {
-            const cityRegex = new RegExp(city, 'i');
-            filter.$or = [ { city: cityRegex }, { provincia: cityRegex } ];
+            matchFilter.city = { $regex: new RegExp(city, 'i') };
         }
         if (country) {
-            filter.country = { $regex: new RegExp(`^${country}$`, 'i') };
+            matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
         }
         if (artist) {
-            filter.artist = { $regex: new RegExp(artist, 'i') };
+            matchFilter.artist = { $regex: new RegExp(artist, 'i') };
         }
         if (dateFrom) {
-            filter.date.$gte = dateFrom;
+            matchFilter.date.$gte = dateFrom;
         }
         if (dateTo) {
-            filter.date.$lte = dateTo;
+            matchFilter.date.$lte = dateTo;
         }
         if (timeframe === 'week' && !dateTo) {
             const nextWeek = new Date(today);
             nextWeek.setDate(today.getDate() + 7);
-            filter.date.$lte = nextWeek.toISOString().split('T')[0];
+            matchFilter.date.$lte = nextWeek.toISOString().split('T')[0];
         }
-        if (search) {
-            const searchTerms = search.split(' ').map(term => `"${term}"`).join(' ');
-            filter.$text = { 
-                $search: searchTerms,
-                $language: 'spanish'
-            };
-        }
+
+        aggregationPipeline.push({ $match: matchFilter });
         
-        const aggregationPipeline = [
-            { $match: filter },
-            { $sort: { date: 1, verified: -1, sourceURL: -1 } },
-            {
-                $group: {
-                    _id: { artist: "$artist", date: "$date", time: "$time" },
-                    doc: { $first: "$$ROOT" }
-                }
-            },
-            { $replaceRoot: { newRoot: "$doc" } },
-            { $sort: { date: 1 } }
-        ];
+        // 3. Etapa final de ordenación
+        // Si no hay búsqueda por texto, ordena por fecha. Si la hay, Atlas Search ya ordena por relevancia.
+        if (!search) {
+            aggregationPipeline.push({ $sort: { date: 1 } });
+        }
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);
@@ -109,11 +122,10 @@ app.get('/events', async (req, res) => {
     }
 });
 
-// RUTA PARA CONTAR EVENTOS
-app.get('/events/count', async (req, res) => {
-    // Definimos la cabecera para desactivar la caché de Vercel también aquí
-    res.setHeader('Cache-Control', 'no-store, max-age=0'); // <-- ARREGLO
 
+// RUTA PARA CONTAR EVENTOS (sin cambios, pero con el header de caché)
+app.get('/events/count', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
         const eventsCollection = db.collection("events");
         const todayString = new Date().toISOString().split('T')[0];
@@ -125,7 +137,9 @@ app.get('/events/count', async (req, res) => {
     }
 });
 
-// RUTA PARA "PLANEAR NOCHE" CON GEMINI
+
+// --- OTRAS RUTAS (GEMINI, TRIP-PLANNER, ANALYTICS) ---
+// ... (El resto de tus rutas no necesitan cambios)
 app.post('/gemini', async (req, res) => {
     const { event } = req.body;
     if (!event) {
@@ -173,8 +187,6 @@ Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no s
         res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
-
-// RUTA PARA EL PLANIFICADOR DE VIAJES
 app.post('/trip-planner', async (req, res) => {
     const { destination, startDate, endDate } = req.body;
 
@@ -231,11 +243,6 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
-
-
-// --- RUTAS DE ANALÍTICAS (MODIFICADAS CON ENRIQUECIMIENTO) ---
-
-// RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
@@ -244,20 +251,16 @@ app.post('/log-search', async (req, res) => {
         const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
 
-        // --- INICIO: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
         const headers = req.headers;
         const uaString = headers['user-agent'];
         const ua = UAParser(uaString);
         
         const eventData = {
-            // Datos originales
             search_term: searchTerm,
             filters_applied: filtersApplied,
             results_count: resultsCount,
             session_id: sessionId,
             interaction_type: 'search',
-            
-            // Nuevos datos enriquecidos
             status: 'success',
             processing_time_ms: Date.now() - startTime,
             user_agent: uaString,
@@ -271,7 +274,6 @@ app.post('/log-search', async (req, res) => {
                 region: headers['x-vercel-ip-country-region'] || null
             }
         };
-        // --- FIN: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
 
         await supabase.from('search_events').insert([eventData]);
         
@@ -281,8 +283,6 @@ app.post('/log-search', async (req, res) => {
         return res.status(200).json({ success: false });
     }
 });
-
-// RUTA PARA REGISTRAR CLICS EN BOTONES
 app.post('/log-interaction', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
@@ -293,18 +293,14 @@ app.post('/log-interaction', async (req, res) => {
             return res.status(400).json({ error: 'interaction_type and session_id are required' });
         }
 
-        // --- INICIO: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
         const headers = req.headers;
         const uaString = headers['user-agent'];
         const ua = UAParser(uaString);
 
         const eventData = {
-            // Datos originales
             session_id: session_id,
             interaction_type: interaction_type,
             filters_applied: event_details,
-
-            // Nuevos datos enriquecidos
             status: 'success',
             processing_time_ms: Date.now() - startTime,
             user_agent: uaString,
@@ -318,7 +314,6 @@ app.post('/log-interaction', async (req, res) => {
                 region: headers['x-vercel-ip-country-region'] || null
             }
         };
-        // --- FIN: BLOQUE DE ENRIQUECIMIENTO DE DATOS ---
 
         const { error } = await supabase.from('search_events').insert([eventData]);
 

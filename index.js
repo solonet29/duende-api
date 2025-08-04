@@ -66,7 +66,7 @@ app.get('/events', async (req, res) => {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
 
-        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
+        const { search, artist, city, country, provincia, dateFrom, dateTo, timeframe } = req.query;
         const aggregationPipeline = [];
 
         // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH

@@ -42,7 +42,7 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (RECONSTRUIDA PARA ATLAS SEARCH)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (VERSIÓN FINAL CON ATLAS SEARCH)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
 
@@ -51,25 +51,20 @@ app.get('/events', async (req, res) => {
         const eventsCollection = db.collection("events");
         const aggregationPipeline = [];
 
-        // 1. Etapa de Búsqueda Libre con Atlas Search (si hay 'search')
+        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH
         if (search) {
             aggregationPipeline.push({
                 $search: {
-                    index: 'default', // Usa el índice de Atlas Search que ya tienes
+                    index: 'default',
                     "compound": {
                         "should": [
+                            { "text": { "query": search, "path": "titulo", "score": { "boost": { "value": 3 } } } },
+                            { "text": { "query": search, "path": "artista", "score": { "boost": { "value": 2 } } } },
                             {
                                 "text": {
                                     "query": search,
-                                    "path": "titulo",
-                                    "score": { "boost": { "value": 3 } } // Damos más importancia al título
-                                }
-                            },
-                            {
-                                "text": {
-                                    "query": search,
-                                    "path": ["artista", "ciudad", "descripcion", "lugar_texto"],
-                                    "fuzzy": { "maxEdits": 1 } // Permitimos errores tipográficos
+                                    "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"],
+                                    "fuzzy": { "maxEdits": 1 }
                                 }
                             }
                         ]
@@ -78,27 +73,17 @@ app.get('/events', async (req, res) => {
             });
         }
 
-        // 2. Etapa de Filtrado (el resto de los filtros)
+        // ETAPA 2: FILTRADO PRECISO
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
 
-        if (city) {
-            matchFilter.city = { $regex: new RegExp(city, 'i') };
-        }
-        if (country) {
-            matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
-        }
-        if (artist) {
-            matchFilter.artist = { $regex: new RegExp(artist, 'i') };
-        }
-        if (dateFrom) {
-            matchFilter.date.$gte = dateFrom;
-        }
-        if (dateTo) {
-            matchFilter.date.$lte = dateTo;
-        }
+        if (city) matchFilter.city = { $regex: new RegExp(city, 'i') };
+        if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
+        if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
+        if (dateFrom) matchFilter.date.$gte = dateFrom;
+        if (dateTo) matchFilter.date.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
             const nextWeek = new Date(today);
             nextWeek.setDate(today.getDate() + 7);
@@ -107,8 +92,7 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
-        // 3. Etapa final de ordenación
-        // Si no hay búsqueda por texto, ordena por fecha. Si la hay, Atlas Search ya ordena por relevancia.
+        // ETAPA 3: ORDENACIÓN
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
@@ -122,8 +106,7 @@ app.get('/events', async (req, res) => {
     }
 });
 
-
-// RUTA PARA CONTAR EVENTOS (sin cambios, pero con el header de caché)
+// RUTA PARA CONTAR EVENTOS
 app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -137,9 +120,7 @@ app.get('/events/count', async (req, res) => {
     }
 });
 
-
-// --- OTRAS RUTAS (GEMINI, TRIP-PLANNER, ANALYTICS) ---
-// ... (El resto de tus rutas no necesitan cambios)
+// RUTA PARA "PLANEAR NOCHE" CON GEMINI
 app.post('/gemini', async (req, res) => {
     const { event } = req.body;
     if (!event) {
@@ -187,6 +168,8 @@ Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no s
         res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
+
+// RUTA PARA EL PLANIFICADOR DE VIAJES
 app.post('/trip-planner', async (req, res) => {
     const { destination, startDate, endDate } = req.body;
 
@@ -243,6 +226,11 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
+
+
+// --- RUTAS DE ANALÍTICAS (MODIFICADAS CON ENRIQUECIMIENTO) ---
+
+// RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
@@ -283,6 +271,8 @@ app.post('/log-search', async (req, res) => {
         return res.status(200).json({ success: false });
     }
 });
+
+// RUTA PARA REGISTRAR CLICS EN BOTONES
 app.post('/log-interaction', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 

@@ -283,7 +283,7 @@ app.post('/log-search', async (req, res) => {
         return res.status(200).json({ success: false });
     }
 });
-
+/*
 app.post('/log-interaction', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
@@ -326,6 +326,6 @@ app.post('/log-interaction', async (req, res) => {
         res.status(200).json({ success: false, message: error.message });
     }
 });
-
+*/
 // Exporta la app para que Vercel la pueda usar
 export default app;

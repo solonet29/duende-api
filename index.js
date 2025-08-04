@@ -11,6 +11,7 @@ const UAParser = require('ua-parser-js');
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
 if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');
+if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
 
@@ -24,7 +25,7 @@ async function connectToDatabase() {
     }
     try {
         await mongoClient.connect();
-        const db = mongoClient.db("DuendeDB"); // Asegúrate de que este es el nombre correcto
+        const db = mongoClient.db("DuendeDB");
         cachedDb = db;
         console.log("Nueva conexión a MongoDB establecida y cacheada.");
         return db;
@@ -49,12 +50,21 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
+// RUTA DE PRUEBA PARA VERIFICAR EL DESPLIEGUE
+app.get('/version', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.status(200).json({ 
+        version: "2.1-serverless-con-huella", 
+        timestamp: new Date().toISOString() 
+    });
+});
+
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (VERSIÓN FINAL CON ATLAS SEARCH)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
 
     try {
-        const db = await connectToDatabase(); // <--- CAMBIO: Usamos la nueva función de conexión
+        const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
 
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
@@ -68,7 +78,13 @@ app.get('/events', async (req, res) => {
                         "should": [
                             { "text": { "query": search, "path": "titulo", "score": { "boost": { "value": 3 } } } },
                             { "text": { "query": search, "path": "artista", "score": { "boost": { "value": 2 } } } },
-                            { "text": { "query": search, "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"], "fuzzy": { "maxEdits": 1 } } }
+                            {
+                                "text": {
+                                    "query": search,
+                                    "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"],
+                                    "fuzzy": { "maxEdits": 1 }
+                                }
+                            }
                         ]
                     }
                 }
@@ -110,7 +126,7 @@ app.get('/events', async (req, res) => {
 app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
-        const db = await connectToDatabase(); // <--- CAMBIO: Usamos la nueva función de conexión
+        const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
         const todayString = new Date().toISOString().split('T')[0];
         const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
@@ -146,7 +162,7 @@ Sugiere un lugar cercano para tomar una última copa, explicando por qué encaja
 ### Consejos Prácticos
 Una lista corta con 2-3 consejos útiles: ¿Necesita reserva? ¿Código de vestimenta? ¿Mejor forma de llegar?
 
-Para cada lugar recomendado, envuelve su nombre entre corchetes: [Nombre del Lugar].
+Para cada lugar recomendado, envuelve su nombre entre corchetas: [Nombre del Lugar].
 Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no sean demasiado largos para facilitar la lectura en móvil.`;
 
     try {
@@ -179,7 +195,7 @@ app.post('/trip-planner', async (req, res) => {
     }
 
     try {
-        const db = await connectToDatabase(); // <--- CAMBIO: Usamos la nueva función de conexión
+        const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
         const filter = {
             city: { $regex: new RegExp(destination, 'i') },
@@ -228,7 +244,6 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
-
 
 // --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {

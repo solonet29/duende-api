@@ -25,9 +25,9 @@ async function connectToDatabase() {
     }
     try {
         await mongoClient.connect();
-        const db = mongoClient.db("AFLandDB");
+        const db = mongoClient.db("DuendeDB");
         cachedDb = db;
-        console.log("Nueva conexión a AFLandDB establecida y cacheada.");
+        console.log("Nueva conexión a DuendeDB establecida y cacheada.");
         return db;
     } catch (error) {
         console.error("Error al conectar a MongoDB:", error);
@@ -54,17 +54,17 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "6.0-final-base-usuario", 
+        version: "9.0-final-con-provincia", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (RECONSTRUIDA)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON PROVINCIA AÑADIDA)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("eventos");
+        const eventsCollection = db.collection("events");
 
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         const aggregationPipeline = [];
@@ -76,9 +76,16 @@ app.get('/events', async (req, res) => {
                     index: 'default',
                     "compound": {
                         "should": [
-                            { "text": { "query": search, "path": "titulo", "score": { "boost": { "value": 3 } } } },
-                            { "text": { "query": search, "path": "artista", "score": { "boost": { "value": 2 } } } },
-                            { "text": { "query": search, "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"], "fuzzy": { "maxEdits": 1 } } }
+                            { "text": { "query": search, "path": "name", "score": { "boost": { "value": 3 } } } },
+                            { "text": { "query": search, "path": "artist", "score": { "boost": { "value": 2 } } } },
+                            {
+                                "text": {
+                                    "query": search,
+                                    // --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
+                                    "path": ["city", "provincia", "country", "description", "venue"],
+                                    "fuzzy": { "maxEdits": 1 }
+                                }
+                            }
                         ]
                     }
                 }
@@ -89,24 +96,24 @@ app.get('/events', async (req, res) => {
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        matchFilter.fecha = { $gte: today.toISOString().split('T')[0] };
+        matchFilter.date = { $gte: today.toISOString().split('T')[0] };
 
         if (city) matchFilter.city = { $regex: new RegExp(city, 'i') };
         if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
         if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
-        if (dateFrom) matchFilter.fecha.$gte = dateFrom;
-        if (dateTo) matchFilter.fecha.$lte = dateTo;
+        if (dateFrom) matchFilter.date.$gte = dateFrom;
+        if (dateTo) matchFilter.date.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
             const nextWeek = new Date(today);
             nextWeek.setDate(today.getDate() + 7);
-            matchFilter.fecha.$lte = nextWeek.toISOString().split('T')[0];
+            matchFilter.date.$lte = nextWeek.toISOString().split('T')[0];
         }
 
         aggregationPipeline.push({ $match: matchFilter });
         
         // ETAPA 3: ORDENACIÓN
         if (!search) {
-            aggregationPipeline.push({ $sort: { fecha: 1 } });
+            aggregationPipeline.push({ $sort: { date: 1 } });
         }
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
@@ -123,9 +130,9 @@ app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("eventos");
+        const eventsCollection = db.collection("events");
         const todayString = new Date().toISOString().split('T')[0];
-        const count = await eventsCollection.countDocuments({ fecha: { $gte: todayString } });
+        const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
         res.json({ total: count });
     } catch (error) {
         console.error("Error al contar eventos:", error);
@@ -158,7 +165,7 @@ Sugiere un lugar cercano para tomar una última copa, explicando por qué encaja
 ### Consejos Prácticos
 Una lista corta con 2-3 consejos útiles: ¿Necesita reserva? ¿Código de vestimenta? ¿Mejor forma de llegar?
 
-Para cada lugar recomendado, envuelve su nombre entre corchetes: [Nombre del Lugar].
+Para cada lugar recomendado, envuelve su nombre entre corchettes: [Nombre del Lugar].
 Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no sean demasiado largos para facilitar la lectura en móvil.`;
 
     try {
@@ -192,18 +199,18 @@ app.post('/trip-planner', async (req, res) => {
 
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("eventos");
+        const eventsCollection = db.collection("events");
         const filter = {
             city: { $regex: new RegExp(destination, 'i') },
-            fecha: { $gte: startDate, $lte: endDate }
+            date: { $gte: startDate, $lte: endDate }
         };
-        const events = await eventsCollection.find(filter).sort({ fecha: 1 }).toArray();
+        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
 
         if (events.length === 0) {
             return res.json({ text: "¡Qué pena! No se han encontrado eventos de flamenco para estas fechas y destino. Te sugiero probar con otro rango de fechas o explorar peñas flamencas y tablaos locales en la ciudad." });
         }
 
-        const eventList = events.map(ev => `- ${new Date(ev.fecha).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.titulo}" con ${ev.artista} en ${ev.lugar_texto || ev.evento}.`).join('\n');
+        const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
 
         const tripPrompt = `Actúa como el mejor planificador de viajes de flamenco de Andalucía. Eres amigable, experto y apasionado. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. Su lista de espectáculos disponibles es:
 ${eventList}
@@ -216,7 +223,7 @@ Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE est
 4.  **Días Libres:** Para los días sin espectáculos, ofrece dos alternativas claras: un "Plan A" (una actividad cultural principal como visitar un museo, un barrio emblemático o una tienda de guitarras) y un "Plan B" (una opción más relajada o diferente, como una clase de compás o un lugar con vistas para relajarse).
 5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
 
-Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes [Nombre del Lugar].`;
+Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetches: [Nombre del Lugar].`;
         
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
@@ -283,7 +290,7 @@ app.post('/log-search', async (req, res) => {
         return res.status(200).json({ success: false });
     }
 });
-/*
+
 app.post('/log-interaction', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
@@ -326,6 +333,6 @@ app.post('/log-interaction', async (req, res) => {
         res.status(200).json({ success: false, message: error.message });
     }
 });
-*/
+
 // Exporta la app para que Vercel la pueda usar
 export default app;

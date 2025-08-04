@@ -54,12 +54,12 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "3.1-sintaxis-corregida", 
+        version: "6.0-final-base-usuario", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (RECONSTRUIDA)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -69,6 +69,7 @@ app.get('/events', async (req, res) => {
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         const aggregationPipeline = [];
 
+        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH
         if (search) {
             aggregationPipeline.push({
                 $search: {
@@ -84,26 +85,28 @@ app.get('/events', async (req, res) => {
             });
         }
 
+        // ETAPA 2: FILTRADO PRECISO
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        matchFilter.date = { $gte: today.toISOString().split('T')[0] };
+        matchFilter.fecha = { $gte: today.toISOString().split('T')[0] };
 
         if (city) matchFilter.city = { $regex: new RegExp(city, 'i') };
         if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
         if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
-        if (dateFrom) matchFilter.date.$gte = dateFrom;
-        if (dateTo) matchFilter.date.$lte = dateTo;
+        if (dateFrom) matchFilter.fecha.$gte = dateFrom;
+        if (dateTo) matchFilter.fecha.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
             const nextWeek = new Date(today);
             nextWeek.setDate(today.getDate() + 7);
-            matchFilter.date.$lte = nextWeek.toISOString().split('T')[0];
+            matchFilter.fecha.$lte = nextWeek.toISOString().split('T')[0];
         }
 
         aggregationPipeline.push({ $match: matchFilter });
         
+        // ETAPA 3: ORDENACIÓN
         if (!search) {
-            aggregationPipeline.push({ $sort: { date: 1 } });
+            aggregationPipeline.push({ $sort: { fecha: 1 } });
         }
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
@@ -122,7 +125,7 @@ app.get('/events/count', async (req, res) => {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("eventos");
         const todayString = new Date().toISOString().split('T')[0];
-        const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
+        const count = await eventsCollection.countDocuments({ fecha: { $gte: todayString } });
         res.json({ total: count });
     } catch (error) {
         console.error("Error al contar eventos:", error);
@@ -192,15 +195,15 @@ app.post('/trip-planner', async (req, res) => {
         const eventsCollection = db.collection("eventos");
         const filter = {
             city: { $regex: new RegExp(destination, 'i') },
-            date: { $gte: startDate, $lte: endDate }
+            fecha: { $gte: startDate, $lte: endDate }
         };
-        const events = await eventsCollection.find(filter).sort({ date: 1 }).toArray();
+        const events = await eventsCollection.find(filter).sort({ fecha: 1 }).toArray();
 
         if (events.length === 0) {
             return res.json({ text: "¡Qué pena! No se han encontrado eventos de flamenco para estas fechas y destino. Te sugiero probar con otro rango de fechas o explorar peñas flamencas y tablaos locales en la ciudad." });
         }
 
-        const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
+        const eventList = events.map(ev => `- ${new Date(ev.fecha).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.titulo}" con ${ev.artista} en ${ev.lugar_texto || ev.evento}.`).join('\n');
 
         const tripPrompt = `Actúa como el mejor planificador de viajes de flamenco de Andalucía. Eres amigable, experto y apasionado. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. Su lista de espectáculos disponibles es:
 ${eventList}
@@ -238,6 +241,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
     }
 });
 
+
 // --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
@@ -274,7 +278,7 @@ app.post('/log-search', async (req, res) => {
         await supabase.from('search_events').insert([eventData]);
         
         return res.status(201).json({ success: true });
-    } catch (e) { // <-- ¡AQUÍ ESTABA EL ERROR! CORREGIDO AHORA.
+    } catch (e) {
         console.error('Log search error:', e.message);
         return res.status(200).json({ success: false });
     }

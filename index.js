@@ -1,5 +1,3 @@
-// index.js - VERSIÓN 100% COMPLETA Y DEFINITIVA (CON ENRIQUECIMIENTO)
-
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -26,20 +24,18 @@ if (!supabase) {
 
 // Conectar a la base de datos una sola vez al inicio
 await mongoClient.connect();
-db = mongoClient.db("DuendeDB");
+db = mongoClient.db("DuendeDB"); // Asegúrate de que este es el nombre correcto de tu BD
 console.log("Conectado a MongoDB.");
 
 // --- MIDDLEWARE ---
-// --- MIDDLEWARE ---
-// Usamos una configuración de CORS final y explícita
 app.use(cors({
   origin: [
     'https://buscador.afland.es',
     'https://duende-frontend.vercel.app',
     'http://localhost:3000'
   ],
-  methods: ['GET', 'POST', 'OPTIONS'], // Permitimos los métodos necesarios
-  allowedHeaders: ['Content-Type', 'Authorization'] // Permitimos las cabeceras comunes
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
 app.use(express.json());
@@ -48,6 +44,9 @@ app.use(express.json());
 
 // RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
+    // Definimos la cabecera para desactivar la caché de Vercel en esta ruta
+    res.setHeader('Cache-Control', 'no-store, max-age=0'); // <-- ARREGLO
+
     const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
     
     try {
@@ -112,6 +111,9 @@ app.get('/events', async (req, res) => {
 
 // RUTA PARA CONTAR EVENTOS
 app.get('/events/count', async (req, res) => {
+    // Definimos la cabecera para desactivar la caché de Vercel también aquí
+    res.setHeader('Cache-Control', 'no-store, max-age=0'); // <-- ARREGLO
+
     try {
         const eventsCollection = db.collection("events");
         const todayString = new Date().toISOString().split('T')[0];

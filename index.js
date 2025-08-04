@@ -15,7 +15,7 @@ if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
 
-// --- PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS (CORREGIDO) ---
+// --- PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS ---
 let cachedDb = null;
 const mongoClient = new MongoClient(MONGO_URI);
 
@@ -25,7 +25,7 @@ async function connectToDatabase() {
     }
     try {
         await mongoClient.connect();
-        const db = mongoClient.db("AFLandDB"); // CORREGIDO
+        const db = mongoClient.db("AFLandDB");
         cachedDb = db;
         console.log("Nueva conexión a AFLandDB establecida y cacheada.");
         return db;
@@ -54,18 +54,17 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "3.0-final-fix", 
+        version: "3.1-sintaxis-corregida", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSqueda DE EVENTOS
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("eventos"); // CORREGIDO
+        const eventsCollection = db.collection("eventos");
 
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         const aggregationPipeline = [];
@@ -121,7 +120,7 @@ app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("eventos"); // CORREGIDO
+        const eventsCollection = db.collection("eventos");
         const todayString = new Date().toISOString().split('T')[0];
         const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
         res.json({ total: count });
@@ -190,7 +189,7 @@ app.post('/trip-planner', async (req, res) => {
 
     try {
         const db = await connectToDatabase();
-        const eventsCollection = db.collection("eventos"); // CORREGIDO
+        const eventsCollection = db.collection("eventos");
         const filter = {
             city: { $regex: new RegExp(destination, 'i') },
             date: { $gte: startDate, $lte: endDate }
@@ -239,7 +238,6 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
     }
 });
 
-
 // --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
@@ -276,7 +274,7 @@ app.post('/log-search', async (req, res) => {
         await supabase.from('search_events').insert([eventData]);
         
         return res.status(201).json({ success: true });
-    } catch (e).
+    } catch (e) { // <-- ¡AQUÍ ESTABA EL ERROR! CORREGIDO AHORA.
         console.error('Log search error:', e.message);
         return res.status(200).json({ success: false });
     }

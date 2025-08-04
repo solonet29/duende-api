@@ -11,21 +11,29 @@ const UAParser = require('ua-parser-js');
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
 if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');
-if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
+
+// --- NUEVO PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS ---
+let cachedDb = null;
 const mongoClient = new MongoClient(MONGO_URI);
-let db;
 
-const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
-if (!supabase) {
-    console.warn("Supabase analytics is disabled. Environment variables are not set.");
+async function connectToDatabase() {
+    if (cachedDb) {
+        return cachedDb;
+    }
+    try {
+        await mongoClient.connect();
+        const db = mongoClient.db("DuendeDB"); // Asegúrate de que este es el nombre correcto
+        cachedDb = db;
+        console.log("Nueva conexión a MongoDB establecida y cacheada.");
+        return db;
+    } catch (error) {
+        console.error("Error al conectar a MongoDB:", error);
+        throw error;
+    }
 }
-
-// Conectar a la base de datos una sola vez al inicio
-await mongoClient.connect();
-db = mongoClient.db("DuendeDB");
-console.log("Conectado a MongoDB.");
+// --- FIN DEL NUEVO PATRÓN DE CONEXIÓN ---
 
 // --- MIDDLEWARE ---
 app.use(cors({
@@ -37,21 +45,21 @@ app.use(cors({
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
 app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (VERSIÓN FINAL CON ATLAS SEARCH)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
 
     try {
-        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
+        const db = await connectToDatabase(); // <--- CAMBIO: Usamos la nueva función de conexión
         const eventsCollection = db.collection("events");
+
+        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         const aggregationPipeline = [];
 
-        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH
         if (search) {
             aggregationPipeline.push({
                 $search: {
@@ -60,20 +68,13 @@ app.get('/events', async (req, res) => {
                         "should": [
                             { "text": { "query": search, "path": "titulo", "score": { "boost": { "value": 3 } } } },
                             { "text": { "query": search, "path": "artista", "score": { "boost": { "value": 2 } } } },
-                            {
-                                "text": {
-                                    "query": search,
-                                    "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"],
-                                    "fuzzy": { "maxEdits": 1 }
-                                }
-                            }
+                            { "text": { "query": search, "path": ["ciudad", "provincia", "country", "descripcion", "lugar_texto"], "fuzzy": { "maxEdits": 1 } } }
                         ]
                     }
                 }
             });
         }
 
-        // ETAPA 2: FILTRADO PRECISO
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -92,7 +93,6 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
-        // ETAPA 3: ORDENACIÓN
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
@@ -110,6 +110,7 @@ app.get('/events', async (req, res) => {
 app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
+        const db = await connectToDatabase(); // <--- CAMBIO: Usamos la nueva función de conexión
         const eventsCollection = db.collection("events");
         const todayString = new Date().toISOString().split('T')[0];
         const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
@@ -178,6 +179,7 @@ app.post('/trip-planner', async (req, res) => {
     }
 
     try {
+        const db = await connectToDatabase(); // <--- CAMBIO: Usamos la nueva función de conexión
         const eventsCollection = db.collection("events");
         const filter = {
             city: { $regex: new RegExp(destination, 'i') },
@@ -228,9 +230,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 });
 
 
-// --- RUTAS DE ANALÍTICAS (MODIFICADAS CON ENRIQUECIMIENTO) ---
-
-// RUTA PARA REGISTRAR EVENTOS DE BÚSQUEDA
+// --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
@@ -272,7 +272,6 @@ app.post('/log-search', async (req, res) => {
     }
 });
 
-// RUTA PARA REGISTRAR CLICS EN BOTONES
 app.post('/log-interaction', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 

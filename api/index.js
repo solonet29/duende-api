@@ -3,7 +3,6 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
-import fetch from 'node-fetch';
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -51,7 +50,7 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "25.0-estable-completo", 
+        version: "26.0-victoria-final", 
         timestamp: new Date().toISOString() 
     });
 });
@@ -175,6 +174,7 @@ Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no s
 
 app.post('/trip-planner', async (req, res) => {
     const { destination, startDate, endDate } = req.body;
+
     if (!destination || !startDate || !endDate) {
         return res.status(400).json({ error: 'Faltan datos para el plan de viaje.' });
     }
@@ -245,10 +245,8 @@ app.post('/log-interaction', async (req, res) => {
         if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
         const { interaction_type, session_id, event_details } = req.body;
-        if (!interaction_type || !session_id) {
-            return res.status(400).json({ error: 'interaction_type and session_id are required' });
-        }
-
+        if (!interaction_type || !session_id) { return res.status(400).json({ error: 'interaction_type and session_id are required' });}
+        
         const eventData = {
             session_id: session_id,
             interaction_type: interaction_type,
@@ -257,7 +255,6 @@ app.post('/log-interaction', async (req, res) => {
 
         const { error } = await supabase.from('search_events').insert([eventData]);
         if (error) throw error;
-
         res.status(201).json({ success: true });
     } catch (error) {
         console.error('Error no crítico en /log-interaction:', error.message);

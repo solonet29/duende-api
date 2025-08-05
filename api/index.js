@@ -3,7 +3,6 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
-import uaParser from 'ua-parser-js';
 import fetch from 'node-fetch';
 
 // --- CONFIGURACIÓN ---
@@ -12,6 +11,7 @@ if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');
 if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
+const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 // --- PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS ---
 let cachedDb = null;
@@ -48,16 +48,14 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA DE PRUEBA PARA VERIFICAR EL DESPLIEGUE
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "24.0-final-ua-parser-fix", 
+        version: "25.0-estable-completo", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -72,12 +70,8 @@ app.get('/events', async (req, res) => {
                     index: 'buscador',
                     text: {
                         query: search,
-                        path: {
-                            'wildcard': '*'
-                        },
-                        fuzzy: {
-                            "maxEdits": 1
-                        }
+                        path: { 'wildcard': '*' },
+                        fuzzy: { "maxEdits": 1 }
                     }
                 }
             });
@@ -117,7 +111,6 @@ app.get('/events', async (req, res) => {
     }
 });
 
-// RUTA PARA CONTAR EVENTOS
 app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-control', 'no-store, max-age=0');
     try {
@@ -132,7 +125,6 @@ app.get('/events/count', async (req, res) => {
     }
 });
 
-// RUTA PARA "PLANEAR NOCHE" CON GEMINI
 app.post('/gemini', async (req, res) => {
     const { event } = req.body;
     if (!event) {
@@ -181,10 +173,8 @@ Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no s
     }
 });
 
-// RUTA PARA EL PLANIFICADOR DE VIAJES
 app.post('/trip-planner', async (req, res) => {
     const { destination, startDate, endDate } = req.body;
-
     if (!destination || !startDate || !endDate) {
         return res.status(400).json({ error: 'Faltan datos para el plan de viaje.' });
     }
@@ -203,79 +193,46 @@ app.post('/trip-planner', async (req, res) => {
         }
 
         const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
-
         const tripPrompt = `Actúa como el mejor planificador de viajes de flamenco de Andalucía. Eres amigable, experto y apasionado. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. Su lista de espectáculos disponibles es:
 ${eventList}
-
 Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE estas reglas:
-
 1.  **Estructura por Días:** Organiza el plan por día.
 2.  **Títulos Temáticos:** Dale a cada día un título temático y evocador (ej. "Martes: Inmersión en el Sacromonte", "Miércoles: Noche de Cante Jondo").
 3.  **Días con Eventos:** Haz que el espectáculo de la lista sea el punto culminante del día, sugiriendo actividades que lo complementen.
 4.  **Días Libres:** Para los días sin espectáculos, ofrece dos alternativas claras: un "Plan A" (una actividad cultural principal como visitar un museo, un barrio emblemático o una tienda de guitarras) y un "Plan B" (una opción más relajada o diferente, como una clase de compás o un lugar con vistas para relajarse).
 5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
-
-Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes: [Nombre del Lugar].`;
+Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes [Nombre del Lugar].`;
         
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
-        const geminiResponse = await fetch(geminiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!geminiResponse.ok) {
-            throw new Error('La IA no pudo generar el plan de viaje.');
-        }
-
+        const geminiResponse = await fetch(geminiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        if (!geminiResponse.ok) { throw new Error('La IA no pudo generar el plan de viaje.'); }
         const data = await geminiResponse.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
         res.status(200).json({ text: text });
-
     } catch (error) {
         console.error("Error en el planificador de viajes:", error);
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
 
-
-// --- RUTAS DE ANALÍTICAS ---
+// --- RUTAS DE ANALÍTICAS (SIMPLIFICADAS SIN UA-PARSER) ---
 app.post('/log-search', async (req, res) => {
     try {
         if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
-        const startTime = Date.now();
         const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
-
-        const headers = req.headers;
-        const uaString = headers['user-agent'];
-        const ua = uaParser(uaString);
         
         const eventData = {
             search_term: searchTerm,
             filters_applied: filtersApplied,
             results_count: resultsCount,
             session_id: sessionId,
-            interaction_type: 'search',
-            status: 'success',
-            processing_time_ms: Date.now() - startTime,
-            user_agent: uaString,
-            device_type: ua.device.type || 'desktop',
-            os: ua.os.name,
-            browser: ua.browser.name,
-            country: headers['x-vercel-ip-country'] || null,
-            referrer: headers['referer'] || null,
-            geo: {
-                city: headers['x-vercel-ip-city'] || null,
-                region: headers['x-vercel-ip-country-region'] || null
-            }
+            interaction_type: 'search'
         };
 
         await supabase.from('search_events').insert([eventData]);
-        
         return res.status(201).json({ success: true });
     } catch (e) {
         console.error('Error no crítico en /log-search:', e.message);
@@ -287,36 +244,18 @@ app.post('/log-interaction', async (req, res) => {
     try {
         if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
-        const startTime = Date.now();
         const { interaction_type, session_id, event_details } = req.body;
         if (!interaction_type || !session_id) {
             return res.status(400).json({ error: 'interaction_type and session_id are required' });
         }
 
-        const headers = req.headers;
-        const uaString = headers['user-agent'];
-        const ua = uaParser(uaString);
-
         const eventData = {
             session_id: session_id,
             interaction_type: interaction_type,
-            filters_applied: event_details,
-            status: 'success',
-            processing_time_ms: Date.now() - startTime,
-            user_agent: uaString,
-            device_type: ua.device.type || 'desktop',
-            os: ua.os.name,
-            browser: ua.browser.name,
-            country: headers['x-vercel-ip-country'] || null,
-            referrer: headers['referer'] || null,
-            geo: {
-                city: headers['x-vercel-ip-city'] || null,
-                region: headers['x-vercel-ip-country-region'] || null
-            }
+            filters_applied: event_details
         };
 
         const { error } = await supabase.from('search_events').insert([eventData]);
-
         if (error) throw error;
 
         res.status(201).json({ success: true });

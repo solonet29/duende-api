@@ -54,12 +54,12 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "12.0-hibrida-completa", 
+        version: "18.0-indice-limpio", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (VERSIÓN HÍBRIDA Y COMPATIBLE)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LÓGICA SIMPLIFICADA)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -68,47 +68,37 @@ app.get('/events', async (req, res) => {
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         let aggregationPipeline = [];
 
-        // ETAPA 1 (Opcional): Búsqueda libre con Atlas Search
+        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH (LÓGICA SIMPLIFICADA)
         if (search) {
             aggregationPipeline.push({
                 $search: {
-                    index: 'default',
-                    "compound": {
-                        "should": [
-                            { "text": { "query": search, "path": "name", "score": { "boost": { "value": 3 } } } },
-                            { "text": { "query": search, "path": "artist", "score": { "boost": { "value": 2 } } } },
-                            { "text": { "query": search, "path": ["city", "provincia", "country", "description", "venue"], "fuzzy": { "maxEdits": 1 } } }
-                        ]
+                    index: 'buscador', // Apuntamos al nuevo índice limpio
+                    text: {
+                        query: search,
+                        path: {
+                            'wildcard': '*'
+                        },
+                        fuzzy: {
+                            "maxEdits": 1
+                        }
                     }
                 }
             });
         }
         
-        // ETAPA 2: Uniones con $lookup para enriquecer los datos
-        aggregationPipeline.push({ $lookup: { from: "artists", localField: "id_artista", foreignField: "id", as: "artistDetails" } });
-        aggregationPipeline.push({ $lookup: { from: "venues", localField: "id_sala", foreignField: "id", as: "venueDetails" } });
-        aggregationPipeline.push({ $unwind: { path: "$artistDetails", preserveNullAndEmptyArrays: true } });
-        aggregationPipeline.push({ $unwind: { path: "$venueDetails", preserveNullAndEmptyArrays: true } });
-
-        // ETAPA 3: Crear campos unificados para compatibilidad
-        aggregationPipeline.push({
-            $addFields: {
-                final_artist: { $ifNull: ["$artistDetails.name", "$artist"] },
-                final_venue: { $ifNull: ["$venueDetails.name", "$venue"] },
-                final_city: { $ifNull: ["$venueDetails.city", "$city"] },
-                final_country: { $ifNull: ["$venueDetails.country", "$country"] }
-            }
-        });
-
-        // ETAPA 4: Filtrado preciso sobre los campos unificados
+        // ETAPA 2: FILTRADO PRECISO
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        matchFilter.date = { $gte: today.toISOString().split('T')[0] };
+        
+        // Solo filtramos por eventos futuros si NO hay una búsqueda libre por texto.
+        if (!search) {
+            matchFilter.date = { $gte: today.toISOString().split('T')[0] };
+        }
 
-        if (city) matchFilter.final_city = { $regex: new RegExp(city, 'i') };
-        if (country) matchFilter.final_country = { $regex: new RegExp(`^${country}$`, 'i') };
-        if (artist) matchFilter.final_artist = { $regex: new RegExp(artist, 'i') };
+        if (city) matchFilter.city = { $regex: new RegExp(city, 'i') };
+        if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
+        if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
         if (dateFrom) matchFilter.date.$gte = dateFrom;
         if (dateTo) matchFilter.date.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
@@ -119,28 +109,10 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
-        // ETAPA 5: Ordenación
+        // ETAPA 3: ORDENACIÓN
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
-        
-        // ETAPA 6: Proyectar la forma final de los datos para el frontend
-        aggregationPipeline.push({
-            $project: {
-                _id: 0,
-                id: "$id",
-                name: "$name",
-                description: "$description",
-                date: "$date",
-                time: "$time",
-                verified: "$verified",
-                sourceURL: "$sourceURL",
-                artist: "$final_artist",
-                venue: "$final_venue",
-                city: "$final_city",
-                country: "$final_country"
-            }
-        });
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);

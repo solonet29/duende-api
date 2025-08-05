@@ -1,12 +1,9 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import { MongoClient } from 'mongodb';
-import { createClient } from '@supabase/supabase-js';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const { MongoClient } = require('mongodb');
+const { createClient } = require('@supabase/supabase-js');
 const UAParser = require('ua-parser-js');
-
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -54,12 +51,12 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "21.0-ensamblaje-final", 
+        version: "22.0-commonjs-final", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (VERSIÓN FINAL)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -243,7 +240,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 });
 
 
-// --- RUTAS DE ANALÍTICAS (BLINDADAS) ---
+// --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
     try {
         if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
@@ -328,5 +325,5 @@ app.post('/log-interaction', async (req, res) => {
     }
 });
 
-// Exporta la app para que Vercel la pueda usar
-export default app;
+// Exporta la app para que Vercel la pueda usar en formato CommonJS
+module.exports = app;

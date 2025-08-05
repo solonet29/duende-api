@@ -51,7 +51,7 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "26.0-victoria-final", 
+        version: "27.0-fetch-restaurado", 
         timestamp: new Date().toISOString() 
     });
 });
@@ -196,7 +196,6 @@ app.post('/trip-planner', async (req, res) => {
         const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
         const tripPrompt = `Actúa como el mejor planificador de viajes de flamenco de Andalucía. Eres amigable, experto y apasionado. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. Su lista de espectáculos disponibles es:
 ${eventList}
-
 Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE estas reglas:
 1.  **Estructura por Días:** Organiza el plan por día.
 2.  **Títulos Temáticos:** Dale a cada día un título temático y evocador (ej. "Martes: Inmersión en el Sacromonte", "Miércoles: Noche de Cante Jondo").
@@ -218,7 +217,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
     }
 });
 
-// --- RUTAS DE ANALÍTICAS (SIMPLIFICADAS SIN UA-PARSER) ---
+// --- RUTAS DE ANALÍTICAS (SIMPLIFICADAS) ---
 app.post('/log-search', async (req, res) => {
     try {
         if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });

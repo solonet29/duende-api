@@ -1,9 +1,10 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const { MongoClient } = require('mongodb');
-const { createClient } = require('@supabase/supabase-js');
-const UAParser = require('ua-parser-js');
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import { MongoClient } from 'mongodb';
+import { createClient } from '@supabase/supabase-js';
+import UAParser from 'ua-parser-js';
+import fetch from 'node-fetch'; // Necesario para fetch en Node.js si no es nativo
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -51,7 +52,7 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "22.0-commonjs-final", 
+        version: "23.0-es-modules-final-completo", 
         timestamp: new Date().toISOString() 
     });
 });
@@ -251,7 +252,7 @@ app.post('/log-search', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const ua = UAParser(uaString);
+        const ua = new UAParser(uaString);
         
         const eventData = {
             search_term: searchTerm,
@@ -262,9 +263,9 @@ app.post('/log-search', async (req, res) => {
             status: 'success',
             processing_time_ms: Date.now() - startTime,
             user_agent: uaString,
-            device_type: ua.device.type || 'desktop',
-            os: ua.os.name,
-            browser: ua.browser.name,
+            device_type: ua.getDevice().type || 'desktop',
+            os: ua.getOS().name,
+            browser: ua.getBrowser().name,
             country: headers['x-vercel-ip-country'] || null,
             referrer: headers['referer'] || null,
             geo: {
@@ -294,7 +295,7 @@ app.post('/log-interaction', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const ua = UAParser(uaString);
+        const ua = new UAParser(uaString);
 
         const eventData = {
             session_id: session_id,
@@ -303,9 +304,9 @@ app.post('/log-interaction', async (req, res) => {
             status: 'success',
             processing_time_ms: Date.now() - startTime,
             user_agent: uaString,
-            device_type: ua.device.type || 'desktop',
-            os: ua.os.name,
-            browser: ua.browser.name,
+            device_type: ua.getDevice().type || 'desktop',
+            os: ua.getOS().name,
+            browser: ua.getBrowser().name,
             country: headers['x-vercel-ip-country'] || null,
             referrer: headers['referer'] || null,
             geo: {
@@ -325,5 +326,5 @@ app.post('/log-interaction', async (req, res) => {
     }
 });
 
-// Exporta la app para que Vercel la pueda usar en formato CommonJS
-module.exports = app;
+// Exporta la app para que Vercel la pueda usar
+export default app;

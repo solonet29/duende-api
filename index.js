@@ -54,33 +54,46 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "15.0-blindado", 
+        version: "16.0-diagnostico-completo", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (LÓGICA FINAL)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LOGS DE DIAGNÓSTICO)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
+        // --- INICIO DE LOS LOGS DE DIAGNÓSTICO ---
+        console.log("\n--- [INICIO] Nueva petición a /events ---");
+        console.log("Timestamp:", new Date().toISOString());
+        console.log("Query Params recibidos:", JSON.stringify(req.query, null, 2));
+        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
+        console.log(`Valor extraído para 'search': ${search}`);
+        // --- FIN DE LOS LOGS DE DIAGNÓSTICO ---
+
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
-        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
+        
         let aggregationPipeline = [];
 
         if (search) {
+            console.log("--> Aplicando etapa $search porque el parámetro 'search' existe.");
             aggregationPipeline.push({
                 $search: {
-                    index: 'default',
-                    "compound": {
-                        "should": [
-                            { "text": { "query": search, "path": "name", "score": { "boost": { "value": 3 } } } },
-                            { "text": { "query": search, "path": "artist", "score": { "boost": { "value": 2 } } } },
-                            { "text": { "query": search, "path": ["city", "provincia", "country", "description", "venue"], "fuzzy": { "maxEdits": 1 } } }
-                        ]
+                    index: 'buscador',
+                    text: {
+                        query: search,
+                        path: {
+                            'wildcard': '*'
+                        },
+                        fuzzy: {
+                            "maxEdits": 1
+                        }
                     }
                 }
             });
+        } else {
+            console.log("--> No se aplica etapa $search porque el parámetro 'search' está ausente.");
         }
         
         const matchFilter = {};
@@ -108,11 +121,15 @@ app.get('/events', async (req, res) => {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
         
+        console.log("Ejecutando pipeline de agregación en MongoDB...");
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
+        console.log(`Consulta finalizada. Se han encontrado ${events.length} eventos.`);
+        console.log("--- [FIN] Petición a /events ---");
         res.json(events);
 
     } catch (error) {
         console.error("Error al buscar eventos:", error);
+        console.log("--- [FIN CON ERROR] Petición a /events ---");
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
@@ -241,12 +258,12 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 });
 
 
-// --- RUTAS DE ANALÍTICAS ("BLINDADAS") ---
+// --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
-    try {
-        if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
+    if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
-        const startTime = Date.now();
+    const startTime = Date.now();
+    try {
         const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
 

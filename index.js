@@ -54,12 +54,12 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "9.0-final-con-provincia", 
+        version: "11.0-lookup-final", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON PROVINCIA AÑADIDA)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LÓGICA $LOOKUP)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -67,9 +67,9 @@ app.get('/events', async (req, res) => {
         const eventsCollection = db.collection("events");
 
         const { search, artist, city, country, provincia, dateFrom, dateTo, timeframe } = req.query;
-        const aggregationPipeline = [];
+        let aggregationPipeline = [];
 
-        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH
+        // ETAPA 1 (Opcional): Búsqueda libre con Atlas Search
         if (search) {
             aggregationPipeline.push({
                 $search: {
@@ -78,29 +78,46 @@ app.get('/events', async (req, res) => {
                         "should": [
                             { "text": { "query": search, "path": "name", "score": { "boost": { "value": 3 } } } },
                             { "text": { "query": search, "path": "artist", "score": { "boost": { "value": 2 } } } },
-                            {
-                                "text": {
-                                    "query": search,
-                                    // --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
-                                    "path": ["city", "provincia", "country", "description", "venue"],
-                                    "fuzzy": { "maxEdits": 1 }
-                                }
-                            }
+                            { "text": { "query": search, "path": ["city", "provincia", "country", "description", "venue"], "fuzzy": { "maxEdits": 1 } } }
                         ]
                     }
                 }
             });
         }
+        
+        // ETAPA 2: Unir con la colección de artistas
+        aggregationPipeline.push({
+            $lookup: {
+                from: "artists",
+                localField: "id_artista",
+                foreignField: "id",
+                as: "artistDetails"
+            }
+        });
 
-        // ETAPA 2: FILTRADO PRECISO
+        // ETAPA 3: Unir con la colección de salas/venues
+        aggregationPipeline.push({
+            $lookup: {
+                from: "venues",
+                localField: "id_sala",
+                foreignField: "id",
+                as: "venueDetails"
+            }
+        });
+
+        // ETAPA 4: "Desenvolver" los resultados de las uniones
+        aggregationPipeline.push({ $unwind: { path: "$artistDetails", preserveNullAndEmptyArrays: true } });
+        aggregationPipeline.push({ $unwind: { path: "$venueDetails", preserveNullAndEmptyArrays: true } });
+        
+        // ETAPA 5: Filtrado preciso sobre los datos unidos
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
 
-        if (city) matchFilter.city = { $regex: new RegExp(city, 'i') };
-        if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
-        if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
+        if (city) matchFilter["venueDetails.city"] = { $regex: new RegExp(city, 'i') };
+        if (country) matchFilter["venueDetails.country"] = { $regex: new RegExp(`^${country}$`, 'i') };
+        if (artist) matchFilter["artistDetails.name"] = { $regex: new RegExp(artist, 'i') };
         if (dateFrom) matchFilter.date.$gte = dateFrom;
         if (dateTo) matchFilter.date.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
@@ -111,11 +128,29 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
-        // ETAPA 3: ORDENACIÓN
+        // ETAPA 6: Ordenación
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
         
+        // ETAPA 7: Dar forma al resultado final para el frontend
+        aggregationPipeline.push({
+            $project: {
+                _id: 0,
+                id: "$id",
+                name: "$name",
+                description: "$description",
+                date: "$date",
+                time: "$time",
+                verified: "$verified",
+                sourceURL: "$sourceURL",
+                artist: "$artistDetails.name",
+                venue: "$venueDetails.name",
+                city: "$venueDetails.city",
+                country: "$venueDetails.country"
+            }
+        });
+
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);
 
@@ -165,7 +200,7 @@ Sugiere un lugar cercano para tomar una última copa, explicando por qué encaja
 ### Consejos Prácticos
 Una lista corta con 2-3 consejos útiles: ¿Necesita reserva? ¿Código de vestimenta? ¿Mejor forma de llegar?
 
-Para cada lugar recomendado, envuelve su nombre entre corchettes: [Nombre del Lugar].
+Para cada lugar recomendado, envuelve su nombre entre corchetes: [Nombre del Lugar].
 Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no sean demasiado largos para facilitar la lectura en móvil.`;
 
     try {
@@ -223,7 +258,7 @@ Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE est
 4.  **Días Libres:** Para los días sin espectáculos, ofrece dos alternativas claras: un "Plan A" (una actividad cultural principal como visitar un museo, un barrio emblemático o una tienda de guitarras) y un "Plan B" (una opción más relajada o diferente, como una clase de compás o un lugar con vistas para relajarse).
 5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
 
-Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetches: [Nombre del Lugar].`;
+Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes: [Nombre del Lugar].`;
         
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };

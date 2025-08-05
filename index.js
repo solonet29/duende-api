@@ -54,19 +54,18 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "11.0-lookup-final", 
+        version: "12.0-hibrida-completa", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LÓGICA $LOOKUP)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (VERSIÓN HÍBRIDA Y COMPATIBLE)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
-
-        const { search, artist, city, country, provincia, dateFrom, dateTo, timeframe } = req.query;
+        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         let aggregationPipeline = [];
 
         // ETAPA 1 (Opcional): Búsqueda libre con Atlas Search
@@ -85,39 +84,31 @@ app.get('/events', async (req, res) => {
             });
         }
         
-        // ETAPA 2: Unir con la colección de artistas
-        aggregationPipeline.push({
-            $lookup: {
-                from: "artists",
-                localField: "id_artista",
-                foreignField: "id",
-                as: "artistDetails"
-            }
-        });
-
-        // ETAPA 3: Unir con la colección de salas/venues
-        aggregationPipeline.push({
-            $lookup: {
-                from: "venues",
-                localField: "id_sala",
-                foreignField: "id",
-                as: "venueDetails"
-            }
-        });
-
-        // ETAPA 4: "Desenvolver" los resultados de las uniones
+        // ETAPA 2: Uniones con $lookup para enriquecer los datos
+        aggregationPipeline.push({ $lookup: { from: "artists", localField: "id_artista", foreignField: "id", as: "artistDetails" } });
+        aggregationPipeline.push({ $lookup: { from: "venues", localField: "id_sala", foreignField: "id", as: "venueDetails" } });
         aggregationPipeline.push({ $unwind: { path: "$artistDetails", preserveNullAndEmptyArrays: true } });
         aggregationPipeline.push({ $unwind: { path: "$venueDetails", preserveNullAndEmptyArrays: true } });
-        
-        // ETAPA 5: Filtrado preciso sobre los datos unidos
+
+        // ETAPA 3: Crear campos unificados para compatibilidad
+        aggregationPipeline.push({
+            $addFields: {
+                final_artist: { $ifNull: ["$artistDetails.name", "$artist"] },
+                final_venue: { $ifNull: ["$venueDetails.name", "$venue"] },
+                final_city: { $ifNull: ["$venueDetails.city", "$city"] },
+                final_country: { $ifNull: ["$venueDetails.country", "$country"] }
+            }
+        });
+
+        // ETAPA 4: Filtrado preciso sobre los campos unificados
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
 
-        if (city) matchFilter["venueDetails.city"] = { $regex: new RegExp(city, 'i') };
-        if (country) matchFilter["venueDetails.country"] = { $regex: new RegExp(`^${country}$`, 'i') };
-        if (artist) matchFilter["artistDetails.name"] = { $regex: new RegExp(artist, 'i') };
+        if (city) matchFilter.final_city = { $regex: new RegExp(city, 'i') };
+        if (country) matchFilter.final_country = { $regex: new RegExp(`^${country}$`, 'i') };
+        if (artist) matchFilter.final_artist = { $regex: new RegExp(artist, 'i') };
         if (dateFrom) matchFilter.date.$gte = dateFrom;
         if (dateTo) matchFilter.date.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
@@ -128,12 +119,12 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
-        // ETAPA 6: Ordenación
+        // ETAPA 5: Ordenación
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
         
-        // ETAPA 7: Dar forma al resultado final para el frontend
+        // ETAPA 6: Proyectar la forma final de los datos para el frontend
         aggregationPipeline.push({
             $project: {
                 _id: 0,
@@ -144,13 +135,13 @@ app.get('/events', async (req, res) => {
                 time: "$time",
                 verified: "$verified",
                 sourceURL: "$sourceURL",
-                artist: "$artistDetails.name",
-                venue: "$venueDetails.name",
-                city: "$venueDetails.city",
-                country: "$venueDetails.country"
+                artist: "$final_artist",
+                venue: "$final_venue",
+                city: "$final_city",
+                country: "$final_country"
             }
         });
-
+        
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);
 

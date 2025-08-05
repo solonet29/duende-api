@@ -54,12 +54,12 @@ app.use(express.json());
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.status(200).json({ 
-        version: "18.0-indice-limpio", 
+        version: "15.0-blindado", 
         timestamp: new Date().toISOString() 
     });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LÓGICA SIMPLIFICADA)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (LÓGICA FINAL)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -68,30 +68,25 @@ app.get('/events', async (req, res) => {
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         let aggregationPipeline = [];
 
-        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH (LÓGICA SIMPLIFICADA)
         if (search) {
             aggregationPipeline.push({
                 $search: {
-                    index: 'buscador', // Apuntamos al nuevo índice limpio
-                    text: {
-                        query: search,
-                        path: {
-                            'wildcard': '*'
-                        },
-                        fuzzy: {
-                            "maxEdits": 1
-                        }
+                    index: 'default',
+                    "compound": {
+                        "should": [
+                            { "text": { "query": search, "path": "name", "score": { "boost": { "value": 3 } } } },
+                            { "text": { "query": search, "path": "artist", "score": { "boost": { "value": 2 } } } },
+                            { "text": { "query": search, "path": ["city", "provincia", "country", "description", "venue"], "fuzzy": { "maxEdits": 1 } } }
+                        ]
                     }
                 }
             });
         }
         
-        // ETAPA 2: FILTRADO PRECISO
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
-        // Solo filtramos por eventos futuros si NO hay una búsqueda libre por texto.
         if (!search) {
             matchFilter.date = { $gte: today.toISOString().split('T')[0] };
         }
@@ -109,7 +104,6 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
-        // ETAPA 3: ORDENACIÓN
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
@@ -247,12 +241,12 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 });
 
 
-// --- RUTAS DE ANALÍTICAS ---
+// --- RUTAS DE ANALÍTICAS ("BLINDADAS") ---
 app.post('/log-search', async (req, res) => {
-    if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
-    
-    const startTime = Date.now();
     try {
+        if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
+    
+        const startTime = Date.now();
         const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
 
@@ -284,16 +278,16 @@ app.post('/log-search', async (req, res) => {
         
         return res.status(201).json({ success: true });
     } catch (e) {
-        console.error('Log search error:', e.message);
-        return res.status(200).json({ success: false });
+        console.error('Error no crítico en /log-search:', e.message);
+        return res.status(200).json({ success: false, error: 'Log failed silently' });
     }
 });
 
 app.post('/log-interaction', async (req, res) => {
-    if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
-
-    const startTime = Date.now();
     try {
+        if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
+
+        const startTime = Date.now();
         const { interaction_type, session_id, event_details } = req.body;
         if (!interaction_type || !session_id) {
             return res.status(400).json({ error: 'interaction_type and session_id are required' });
@@ -327,8 +321,8 @@ app.post('/log-interaction', async (req, res) => {
 
         res.status(201).json({ success: true });
     } catch (error) {
-        console.error('Error logging interaction:', error);
-        res.status(200).json({ success: false, message: error.message });
+        console.error('Error no crítico en /log-interaction:', error.message);
+        res.status(200).json({ success: false, error: 'Log failed silently' });
     }
 });
 

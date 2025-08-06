@@ -5,7 +5,7 @@ import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const UAParser = require('ua-parser-js');
+
 
 
 // --- CONFIGURACIÓN ---

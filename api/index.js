@@ -260,7 +260,7 @@ app.post('/log-search', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const ua = UAParser(uaString);
+        
         
         const eventData = {
             search_term: searchTerm,
@@ -303,7 +303,7 @@ app.post('/log-interaction', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const ua = UAParser(uaString);
+        
 
         const eventData = {
             session_id: session_id,

@@ -3,7 +3,10 @@ import express from 'express';
 import cors from 'cors';
 import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
-import fetch from 'node-fetch';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const UAParser = require('ua-parser-js');
+
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -11,14 +14,15 @@ if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');
 if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
-const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-// --- PATRÓN DE CONEXIÓN A MONGODB ---
+// --- PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS ---
 let cachedDb = null;
 const mongoClient = new MongoClient(MONGO_URI);
 
 async function connectToDatabase() {
-    if (cachedDb) return cachedDb;
+    if (cachedDb) {
+        return cachedDb;
+    }
     try {
         await mongoClient.connect();
         const db = mongoClient.db("DuendeDB");
@@ -30,10 +34,15 @@ async function connectToDatabase() {
         throw error;
     }
 }
+// --- FIN DEL PATRÓN DE CONEXIÓN ---
 
 // --- MIDDLEWARE ---
 app.use(cors({
-  origin: ['https://buscador.afland.es', 'https://duende-frontend.vercel.app', 'http://localhost:3000'],
+  origin: [
+    'https://buscador.afland.es',
+    'https://duende-frontend.vercel.app',
+    'http://localhost:3000'
+  ],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -41,79 +50,57 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
+// RUTA DE PRUEBA PARA VERIFICAR EL DESPLIEGUE
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.status(200).json({ version: "11.0-lookup-final" });
+    res.status(200).json({ 
+        version: "14.2-filtro-provincia-fix", 
+        timestamp: new Date().toISOString() 
+    });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LÓGICA $LOOKUP)
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
+
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         let aggregationPipeline = [];
 
-        // ETAPA 1: Búsqueda libre con Atlas Search (si aplica)
+        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH
         if (search) {
             aggregationPipeline.push({
                 $search: {
-                    index: 'default',
-                    "compound": {
-                        "should": [
-                            { "text": { "query": search, "path": "name", "score": { "boost": { "value": 3 } } } },
-                            { "text": { "query": search, "path": "artist", "score": { "boost": { "value": 2 } } } },
-                            { "text": { "query": search, "path": ["city", "provincia", "country", "description", "venue"], "fuzzy": { "maxEdits": 1 } } }
-                        ]
+                    index: 'buscador',
+                    text: {
+                        query: search,
+                        path: { 'wildcard': '*' },
+                        fuzzy: { "maxEdits": 1 }
                     }
                 }
             });
         }
-        
-        // ETAPA 2: Unir con la colección de artistas
-        aggregationPipeline.push({
-            $lookup: {
-                from: "artists",
-                localField: "id_artista",
-                foreignField: "id",
-                as: "artistDetails"
-            }
-        });
 
-        // ETAPA 3: Unir con la colección de salas/venues
-        aggregationPipeline.push({
-            $lookup: {
-                from: "venues",
-                localField: "id_sala",
-                foreignField: "id",
-                as: "venueDetails"
-            }
-        });
-
-        // ETAPA 4: "Desenvolver" los resultados de las uniones
-        aggregationPipeline.push({ $unwind: { path: "$artistDetails", preserveNullAndEmptyArrays: true } });
-        aggregationPipeline.push({ $unwind: { path: "$venueDetails", preserveNullAndEmptyArrays: true } });
-        
-        // ETAPA 5: Crear campos unificados para compatibilidad con datos antiguos
-        aggregationPipeline.push({
-            $addFields: {
-                final_artist: { $ifNull: ["$artistDetails.name", "$artist"] },
-                final_venue: { $ifNull: ["$venueDetails.name", "$venue"] },
-                final_city: { $ifNull: ["$venueDetails.city", "$city"] },
-                final_country: { $ifNull: ["$venueDetails.country", "$country"] }
-            }
-        });
-
-        // ETAPA 6: Filtrado preciso sobre los datos ya unificados
+        // ETAPA 2: FILTRADO PRECISO
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
 
-        if (city) matchFilter.final_city = { $regex: new RegExp(city, 'i') };
-        if (country) matchFilter.final_country = { $regex: new RegExp(`^${country}$`, 'i') };
-        if (artist) matchFilter.final_artist = { $regex: new RegExp(artist, 'i') };
+        // --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
+        // Ahora, si se pasa el parámetro 'city', busca tanto en el campo 'city' como en 'province'.
+        if (city) {
+            const locationRegex = new RegExp(city, 'i');
+            matchFilter.$or = [
+                { city: locationRegex },
+                { province: locationRegex }
+            ];
+        }
+        
+        if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
+        if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
         if (dateFrom) matchFilter.date.$gte = dateFrom;
         if (dateTo) matchFilter.date.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
@@ -124,28 +111,10 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
-        // ETAPA 7: Ordenación
+        // ETAPA 3: ORDENACIÓN
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
-        
-        // ETAPA 8: Dar forma al resultado final para el frontend
-        aggregationPipeline.push({
-            $project: {
-                _id: 0,
-                id: "$id",
-                name: "$name",
-                description: "$description",
-                date: "$date",
-                time: "$time",
-                verified: "$verified",
-                sourceURL: "$sourceURL",
-                artist: "$final_artist",
-                venue: "$final_venue",
-                city: "$final_city",
-                country: "$final_country"
-            }
-        });
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);
@@ -282,10 +251,10 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 
 // --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
-    try {
-        if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
+    if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
-        const startTime = Date.now();
+    const startTime = Date.now();
+    try {
         const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
 
@@ -317,16 +286,16 @@ app.post('/log-search', async (req, res) => {
         
         return res.status(201).json({ success: true });
     } catch (e) {
-        console.error('Error no crítico en /log-search:', e.message);
-        return res.status(200).json({ success: false, error: 'Log failed silently' });
+        console.error('Log search error:', e.message);
+        return res.status(200).json({ success: false });
     }
 });
 
 app.post('/log-interaction', async (req, res) => {
-    try {
-        if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
+    if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
-        const startTime = Date.now();
+    const startTime = Date.now();
+    try {
         const { interaction_type, session_id, event_details } = req.body;
         if (!interaction_type || !session_id) {
             return res.status(400).json({ error: 'interaction_type and session_id are required' });
@@ -360,8 +329,8 @@ app.post('/log-interaction', async (req, res) => {
 
         res.status(201).json({ success: true });
     } catch (error) {
-        console.error('Error no crítico en /log-interaction:', error.message);
-        res.status(200).json({ success: false, error: 'Log failed silently' });
+        console.error('Error logging interaction:', error);
+        res.status(200).json({ success: false, message: error.message });
     }
 });
 

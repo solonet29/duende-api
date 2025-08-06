@@ -95,7 +95,7 @@ app.get('/events', async (req, res) => {
             const locationRegex = new RegExp(city, 'i');
             matchFilter.$or = [
                 { city: locationRegex },
-                { province: locationRegex }
+                { provincia: locationRegex }
             ];
         }
         

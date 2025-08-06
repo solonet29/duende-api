@@ -13,14 +13,12 @@ if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 const app = express();
 const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
-// --- PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS ---
+// --- PATRÓN DE CONEXIÓN A MONGODB ---
 let cachedDb = null;
 const mongoClient = new MongoClient(MONGO_URI);
 
 async function connectToDatabase() {
-    if (cachedDb) {
-        return cachedDb;
-    }
+    if (cachedDb) return cachedDb;
     try {
         await mongoClient.connect();
         const db = mongoClient.db("DuendeDB");
@@ -32,15 +30,10 @@ async function connectToDatabase() {
         throw error;
     }
 }
-// --- FIN DEL PATRÓN DE CONEXIÓN ---
 
 // --- MIDDLEWARE ---
 app.use(cors({
-  origin: [
-    'https://buscador.afland.es',
-    'https://duende-frontend.vercel.app',
-    'http://localhost:3000'
-  ],
+  origin: ['https://buscador.afland.es', 'https://duende-frontend.vercel.app', 'http://localhost:3000'],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -50,12 +43,10 @@ app.use(express.json());
 
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.status(200).json({ 
-        version: "27.0-fetch-restaurado", 
-        timestamp: new Date().toISOString() 
-    });
+    res.status(200).json({ version: "11.0-lookup-final" });
 });
 
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (CON LÓGICA $LOOKUP)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -64,30 +55,65 @@ app.get('/events', async (req, res) => {
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         let aggregationPipeline = [];
 
+        // ETAPA 1: Búsqueda libre con Atlas Search (si aplica)
         if (search) {
             aggregationPipeline.push({
                 $search: {
-                    index: 'buscador',
-                    text: {
-                        query: search,
-                        path: { 'wildcard': '*' },
-                        fuzzy: { "maxEdits": 1 }
+                    index: 'default',
+                    "compound": {
+                        "should": [
+                            { "text": { "query": search, "path": "name", "score": { "boost": { "value": 3 } } } },
+                            { "text": { "query": search, "path": "artist", "score": { "boost": { "value": 2 } } } },
+                            { "text": { "query": search, "path": ["city", "provincia", "country", "description", "venue"], "fuzzy": { "maxEdits": 1 } } }
+                        ]
                     }
                 }
             });
         }
         
+        // ETAPA 2: Unir con la colección de artistas
+        aggregationPipeline.push({
+            $lookup: {
+                from: "artists",
+                localField: "id_artista",
+                foreignField: "id",
+                as: "artistDetails"
+            }
+        });
+
+        // ETAPA 3: Unir con la colección de salas/venues
+        aggregationPipeline.push({
+            $lookup: {
+                from: "venues",
+                localField: "id_sala",
+                foreignField: "id",
+                as: "venueDetails"
+            }
+        });
+
+        // ETAPA 4: "Desenvolver" los resultados de las uniones
+        aggregationPipeline.push({ $unwind: { path: "$artistDetails", preserveNullAndEmptyArrays: true } });
+        aggregationPipeline.push({ $unwind: { path: "$venueDetails", preserveNullAndEmptyArrays: true } });
+        
+        // ETAPA 5: Crear campos unificados para compatibilidad con datos antiguos
+        aggregationPipeline.push({
+            $addFields: {
+                final_artist: { $ifNull: ["$artistDetails.name", "$artist"] },
+                final_venue: { $ifNull: ["$venueDetails.name", "$venue"] },
+                final_city: { $ifNull: ["$venueDetails.city", "$city"] },
+                final_country: { $ifNull: ["$venueDetails.country", "$country"] }
+            }
+        });
+
+        // ETAPA 6: Filtrado preciso sobre los datos ya unificados
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        
-        if (!search) {
-            matchFilter.date = { $gte: today.toISOString().split('T')[0] };
-        }
+        matchFilter.date = { $gte: today.toISOString().split('T')[0] };
 
-        if (city) matchFilter.city = { $regex: new RegExp(city, 'i') };
-        if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
-        if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
+        if (city) matchFilter.final_city = { $regex: new RegExp(city, 'i') };
+        if (country) matchFilter.final_country = { $regex: new RegExp(`^${country}$`, 'i') };
+        if (artist) matchFilter.final_artist = { $regex: new RegExp(artist, 'i') };
         if (dateFrom) matchFilter.date.$gte = dateFrom;
         if (dateTo) matchFilter.date.$lte = dateTo;
         if (timeframe === 'week' && !dateTo) {
@@ -98,9 +124,28 @@ app.get('/events', async (req, res) => {
 
         aggregationPipeline.push({ $match: matchFilter });
         
+        // ETAPA 7: Ordenación
         if (!search) {
             aggregationPipeline.push({ $sort: { date: 1 } });
         }
+        
+        // ETAPA 8: Dar forma al resultado final para el frontend
+        aggregationPipeline.push({
+            $project: {
+                _id: 0,
+                id: "$id",
+                name: "$name",
+                description: "$description",
+                date: "$date",
+                time: "$time",
+                verified: "$verified",
+                sourceURL: "$sourceURL",
+                artist: "$final_artist",
+                venue: "$final_venue",
+                city: "$final_city",
+                country: "$final_country"
+            }
+        });
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);
@@ -111,6 +156,7 @@ app.get('/events', async (req, res) => {
     }
 });
 
+// RUTA PARA CONTAR EVENTOS
 app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-control', 'no-store, max-age=0');
     try {
@@ -125,6 +171,7 @@ app.get('/events/count', async (req, res) => {
     }
 });
 
+// RUTA PARA "PLANEAR NOCHE" CON GEMINI
 app.post('/gemini', async (req, res) => {
     const { event } = req.body;
     if (!event) {
@@ -173,6 +220,7 @@ Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no s
     }
 });
 
+// RUTA PARA EL PLANIFICADOR DE VIAJES
 app.post('/trip-planner', async (req, res) => {
     const { destination, startDate, endDate } = req.body;
 
@@ -194,46 +242,79 @@ app.post('/trip-planner', async (req, res) => {
         }
 
         const eventList = events.map(ev => `- ${new Date(ev.date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}: "${ev.name}" con ${ev.artist} en ${ev.venue}.`).join('\n');
+
         const tripPrompt = `Actúa como el mejor planificador de viajes de flamenco de Andalucía. Eres amigable, experto y apasionado. Un viajero quiere visitar ${destination} desde el ${startDate} hasta el ${endDate}. Su lista de espectáculos disponibles es:
 ${eventList}
+
 Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE estas reglas:
+
 1.  **Estructura por Días:** Organiza el plan por día.
 2.  **Títulos Temáticos:** Dale a cada día un título temático y evocador (ej. "Martes: Inmersión en el Sacromonte", "Miércoles: Noche de Cante Jondo").
 3.  **Días con Eventos:** Haz que el espectáculo de la lista sea el punto culminante del día, sugiriendo actividades que lo complementen.
 4.  **Días Libres:** Para los días sin espectáculos, ofrece dos alternativas claras: un "Plan A" (una actividad cultural principal como visitar un museo, un barrio emblemático o una tienda de guitarras) y un "Plan B" (una opción más relajada o diferente, como una clase de compás o un lugar con vistas para relajarse).
 5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
-Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes [Nombre del Lugar].`;
+
+Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes: [Nombre del Lugar].`;
         
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
-        const geminiResponse = await fetch(geminiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        if (!geminiResponse.ok) { throw new Error('La IA no pudo generar el plan de viaje.'); }
+        const geminiResponse = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!geminiResponse.ok) {
+            throw new Error('La IA no pudo generar el plan de viaje.');
+        }
+
         const data = await geminiResponse.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
         res.status(200).json({ text: text });
+
     } catch (error) {
         console.error("Error en el planificador de viajes:", error);
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
 
-// --- RUTAS DE ANALÍTICAS (SIMPLIFICADAS) ---
+
+// --- RUTAS DE ANALÍTICAS ---
 app.post('/log-search', async (req, res) => {
     try {
         if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
+        const startTime = Date.now();
         const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
         if (!sessionId) return res.status(400).json({ error: 'sessionId is required' });
+
+        const headers = req.headers;
+        const uaString = headers['user-agent'];
+        const ua = UAParser(uaString);
         
         const eventData = {
             search_term: searchTerm,
             filters_applied: filtersApplied,
             results_count: resultsCount,
             session_id: sessionId,
-            interaction_type: 'search'
+            interaction_type: 'search',
+            status: 'success',
+            processing_time_ms: Date.now() - startTime,
+            user_agent: uaString,
+            device_type: ua.device.type || 'desktop',
+            os: ua.os.name,
+            browser: ua.browser.name,
+            country: headers['x-vercel-ip-country'] || null,
+            referrer: headers['referer'] || null,
+            geo: {
+                city: headers['x-vercel-ip-city'] || null,
+                region: headers['x-vercel-ip-country-region'] || null
+            }
         };
 
         await supabase.from('search_events').insert([eventData]);
+        
         return res.status(201).json({ success: true });
     } catch (e) {
         console.error('Error no crítico en /log-search:', e.message);
@@ -245,17 +326,38 @@ app.post('/log-interaction', async (req, res) => {
     try {
         if (!supabase) return res.status(200).json({ message: 'Analytics disabled' });
 
+        const startTime = Date.now();
         const { interaction_type, session_id, event_details } = req.body;
-        if (!interaction_type || !session_id) { return res.status(400).json({ error: 'interaction_type and session_id are required' });}
-        
+        if (!interaction_type || !session_id) {
+            return res.status(400).json({ error: 'interaction_type and session_id are required' });
+        }
+
+        const headers = req.headers;
+        const uaString = headers['user-agent'];
+        const ua = UAParser(uaString);
+
         const eventData = {
             session_id: session_id,
             interaction_type: interaction_type,
-            filters_applied: event_details
+            filters_applied: event_details,
+            status: 'success',
+            processing_time_ms: Date.now() - startTime,
+            user_agent: uaString,
+            device_type: ua.device.type || 'desktop',
+            os: ua.os.name,
+            browser: ua.browser.name,
+            country: headers['x-vercel-ip-country'] || null,
+            referrer: headers['referer'] || null,
+            geo: {
+                city: headers['x-vercel-ip-city'] || null,
+                region: headers['x-vercel-ip-country-region'] || null
+            }
         };
 
         const { error } = await supabase.from('search_events').insert([eventData]);
+
         if (error) throw error;
+
         res.status(201).json({ success: true });
     } catch (error) {
         console.error('Error no crítico en /log-interaction:', error.message);

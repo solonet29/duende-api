@@ -5,7 +5,6 @@ import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const UAParser = require('ua-parser-js');
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -17,7 +16,6 @@ const app = express();
 // --- INICIALIZACIÓN DE SUPABASE ---
 const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 if (!supabase) console.warn("Supabase no configurado, las analíticas están deshabilitadas.");
-
 
 // --- PATRÓN DE CONEXIÓN A MONGODB ---
 let cachedDb = null;
@@ -47,13 +45,11 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA DE PRUEBA
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.status(200).json({ version: "15.0-quality-filter-and-sort", timestamp: new Date().toISOString() });
+    res.status(200).json({ version: "15.1-final-complete", timestamp: new Date().toISOString() });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (MODIFICADA)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
@@ -70,11 +66,13 @@ app.get('/events', async (req, res) => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
+        // --- INICIO DE LA MODIFICACIÓN ---
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
         matchFilter.name = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.artist = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.time = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.venue = { $ne: null, $nin: ["", "N/A"] };
+        // --- FIN DE LA MODIFICACIÓN ---
 
         if (city) {
             const locationRegex = new RegExp(city, 'i');
@@ -91,7 +89,7 @@ app.get('/events', async (req, res) => {
         }
 
         aggregationPipeline.push({ $match: matchFilter });
-        aggregationPipeline.push({ $sort: { date: 1 } });
+        aggregationPipeline.push({ $sort: { date: 1 } }); // <-- ORDENACIÓN APLICADA SIEMPRE
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);
@@ -101,7 +99,6 @@ app.get('/events', async (req, res) => {
     }
 });
 
-// RUTA PARA CONTAR EVENTOS (MODIFICADA)
 app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-control', 'no-store, max-age=0');
     try {
@@ -109,11 +106,13 @@ app.get('/events/count', async (req, res) => {
         const eventsCollection = db.collection("events");
         const todayString = new Date().toISOString().split('T')[0];
         const count = await eventsCollection.countDocuments({
+            // --- INICIO DE LA MODIFICACIÓN ---
             date: { $gte: todayString },
             name: { $ne: null, $nin: ["", "N/A"] },
             artist: { $ne: null, $nin: ["", "N/A"] },
             time: { $ne: null, $nin: ["", "N/A"] },
             venue: { $ne: null, $nin: ["", "N/A"] }
+            // --- FIN DE LA MODIFICACIÓN ---
         });
         res.json({ total: count });
     } catch (error) {
@@ -122,7 +121,6 @@ app.get('/events/count', async (req, res) => {
     }
 });
 
-// RUTA PARA "PLANEAR NOCHE" CON GEMINI (ORIGINAL RESTAURADA)
 app.post('/gemini', async (req, res) => {
     const { event } = req.body;
     if (!event) {
@@ -171,7 +169,6 @@ Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no s
     }
 });
 
-// RUTA PARA EL PLANIFICADOR DE VIAJES (ORIGINAL RESTAURADA)
 app.post('/trip-planner', async (req, res) => {
     const { destination, startDate, endDate } = req.body;
 
@@ -230,7 +227,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
     }
 });
 
-// --- RUTAS DE ANALÍTICAS (ORIGINALES RESTAURADAS) ---
+
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
@@ -241,8 +238,8 @@ app.post('/log-search', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const parser = new UAParser();
-        const ua = parser.setUA(uaString).getResult();
+    
+        
         
         const eventData = {
             search_term: searchTerm,
@@ -284,8 +281,7 @@ app.post('/log-interaction', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        const parser = new UAParser();
-        const ua = parser.setUA(uaString).getResult();
+        
 
         const eventData = {
             session_id: session_id,

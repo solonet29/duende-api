@@ -18,6 +18,7 @@ const app = express();
 const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 if (!supabase) console.warn("Supabase no configurado, las analíticas están deshabilitadas.");
 
+
 // --- PATRÓN DE CONEXIÓN A MONGODB ---
 let cachedDb = null;
 const mongoClient = new MongoClient(MONGO_URI);

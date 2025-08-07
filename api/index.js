@@ -5,8 +5,7 @@ import { MongoClient } from 'mongodb';
 import { createClient } from '@supabase/supabase-js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-
-
+const UAParser = require('ua-parser-js');
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -15,14 +14,16 @@ if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
 
 const app = express();
 
-// --- PATRÓN DE CONEXIÓN A MONGODB PARA SERVERLESS ---
+// --- INICIALIZACIÓN DE SUPABASE ---
+const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+if (!supabase) console.warn("Supabase no configurado, las analíticas están deshabilitadas.");
+
+// --- PATRÓN DE CONEXIÓN A MONGODB ---
 let cachedDb = null;
 const mongoClient = new MongoClient(MONGO_URI);
 
 async function connectToDatabase() {
-    if (cachedDb) {
-        return cachedDb;
-    }
+    if (cachedDb) return cachedDb;
     try {
         await mongoClient.connect();
         const db = mongoClient.db("DuendeDB");
@@ -34,15 +35,10 @@ async function connectToDatabase() {
         throw error;
     }
 }
-// --- FIN DEL PATRÓN DE CONEXIÓN ---
 
 // --- MIDDLEWARE ---
 app.use(cors({
-  origin: [
-    'https://buscador.afland.es',
-    'https://duende-frontend.vercel.app',
-    'http://localhost:3000'
-  ],
+  origin: ['https://buscador.afland.es', 'https://duende-frontend.vercel.app', 'http://localhost:3000'],
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -50,55 +46,39 @@ app.use(express.json());
 
 // --- RUTAS DE LA API ---
 
-// RUTA DE PRUEBA PARA VERIFICAR EL DESPLIEGUE
+// RUTA DE PRUEBA
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.status(200).json({ 
-        version: "14.2-filtro-provincia-fix", 
-        timestamp: new Date().toISOString() 
-    });
+    res.status(200).json({ version: "15.0-quality-filter-and-sort", timestamp: new Date().toISOString() });
 });
 
-// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS
+// RUTA PRINCIPAL DE BÚSQUEDA DE EVENTOS (MODIFICADA)
 app.get('/events', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
-
         const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
         let aggregationPipeline = [];
 
-        // ETAPA 1: BÚSQUEDA LIBRE CON ATLAS SEARCH
         if (search) {
-            aggregationPipeline.push({
-                $search: {
-                    index: 'buscador',
-                    text: {
-                        query: search,
-                        path: { 'wildcard': '*' },
-                        fuzzy: { "maxEdits": 1 }
-                    }
-                }
-            });
+            aggregationPipeline.push({ $search: { index: 'buscador', text: { query: search, path: { 'wildcard': '*' }, fuzzy: { "maxEdits": 1 } } } });
         }
 
-        // ETAPA 2: FILTRADO PRECISO
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
+        
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
+        matchFilter.name = { $ne: null, $nin: ["", "N/A"] };
+        matchFilter.artist = { $ne: null, $nin: ["", "N/A"] };
+        matchFilter.time = { $ne: null, $nin: ["", "N/A"] };
+        matchFilter.venue = { $ne: null, $nin: ["", "N/A"] };
 
-        // --- ¡AQUÍ ESTÁ LA CORRECCIÓN! ---
-        // Ahora, si se pasa el parámetro 'city', busca tanto en el campo 'city' como en 'province'.
         if (city) {
             const locationRegex = new RegExp(city, 'i');
-            matchFilter.$or = [
-                { city: locationRegex },
-                { provincia: locationRegex }
-            ];
+            matchFilter.$or = [{ city: locationRegex }, { provincia: locationRegex }];
         }
-        
         if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
         if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
         if (dateFrom) matchFilter.date.$gte = dateFrom;
@@ -110,29 +90,30 @@ app.get('/events', async (req, res) => {
         }
 
         aggregationPipeline.push({ $match: matchFilter });
-        
-        // ETAPA 3: ORDENACIÓN
-        if (!search) {
-            aggregationPipeline.push({ $sort: { date: 1 } });
-        }
+        aggregationPipeline.push({ $sort: { date: 1 } });
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json(events);
-
     } catch (error) {
         console.error("Error al buscar eventos:", error);
         res.status(500).json({ error: "Error interno del servidor." });
     }
 });
 
-// RUTA PARA CONTAR EVENTOS
+// RUTA PARA CONTAR EVENTOS (MODIFICADA)
 app.get('/events/count', async (req, res) => {
     res.setHeader('Cache-control', 'no-store, max-age=0');
     try {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
         const todayString = new Date().toISOString().split('T')[0];
-        const count = await eventsCollection.countDocuments({ date: { $gte: todayString } });
+        const count = await eventsCollection.countDocuments({
+            date: { $gte: todayString },
+            name: { $ne: null, $nin: ["", "N/A"] },
+            artist: { $ne: null, $nin: ["", "N/A"] },
+            time: { $ne: null, $nin: ["", "N/A"] },
+            venue: { $ne: null, $nin: ["", "N/A"] }
+        });
         res.json({ total: count });
     } catch (error) {
         console.error("Error al contar eventos:", error);
@@ -140,7 +121,7 @@ app.get('/events/count', async (req, res) => {
     }
 });
 
-// RUTA PARA "PLANEAR NOCHE" CON GEMINI
+// RUTA PARA "PLANEAR NOCHE" CON GEMINI (ORIGINAL RESTAURADA)
 app.post('/gemini', async (req, res) => {
     const { event } = req.body;
     if (!event) {
@@ -189,7 +170,7 @@ Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no s
     }
 });
 
-// RUTA PARA EL PLANIFICADOR DE VIAJES
+// RUTA PARA EL PLANIFICADOR DE VIAJES (ORIGINAL RESTAURADA)
 app.post('/trip-planner', async (req, res) => {
     const { destination, startDate, endDate } = req.body;
 
@@ -248,8 +229,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
     }
 });
 
-
-// --- RUTAS DE ANALÍTICAS ---
+// --- RUTAS DE ANALÍTICAS (ORIGINALES RESTAURADAS) ---
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
     
@@ -260,7 +240,8 @@ app.post('/log-search', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        
+        const parser = new UAParser();
+        const ua = parser.setUA(uaString).getResult();
         
         const eventData = {
             search_term: searchTerm,
@@ -283,7 +264,6 @@ app.post('/log-search', async (req, res) => {
         };
 
         await supabase.from('search_events').insert([eventData]);
-        
         return res.status(201).json({ success: true });
     } catch (e) {
         console.error('Log search error:', e.message);
@@ -303,7 +283,8 @@ app.post('/log-interaction', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        
+        const parser = new UAParser();
+        const ua = parser.setUA(uaString).getResult();
 
         const eventData = {
             session_id: session_id,
@@ -324,7 +305,6 @@ app.post('/log-interaction', async (req, res) => {
         };
 
         const { error } = await supabase.from('search_events').insert([eventData]);
-
         if (error) throw error;
 
         res.status(201).json({ success: true });

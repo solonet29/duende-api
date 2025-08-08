@@ -42,9 +42,9 @@ async function connectToDatabase() {
 
 // --- MIDDLEWARE ---
 app.use(cors({
-  origin: ['https://buscador.afland.es', 'https://duende-frontend.vercel.app', 'http://localhost:3000', 'https://afland.es'],
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+    origin: ['https://buscador.afland.es', 'https://duende-frontend.vercel.app', 'http://localhost:3000', 'https://afland.es'],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
@@ -52,7 +52,7 @@ app.use(express.json());
 
 app.get('/version', (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    res.status(200).json({ version: "15.2-night-plan-cache-full", timestamp: new Date().toISOString() });
+    res.status(200).json({ version: "15.4-ambiguous-search", timestamp: new Date().toISOString() });
 });
 
 app.get('/events', async (req, res) => {
@@ -60,23 +60,92 @@ app.get('/events', async (req, res) => {
     try {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
-        const { search, artist, city, country, dateFrom, dateTo, timeframe } = req.query;
+        const { search, artist, city, country, dateFrom, dateTo, timeframe, preferredOption } = req.query; // Añadimos preferredOption
         let aggregationPipeline = [];
-
-        if (search) {
-            aggregationPipeline.push({ $search: { index: 'buscador', text: { query: search, path: { 'wildcard': '*' }, fuzzy: { "maxEdits": 1 } } } });
-        }
+        
+        // --- LISTA DE CIUDADES, PAÍSES Y TÉRMINOS AMBIGUOS ---
+        const ciudadesYProvincias = [
+            'Sevilla', 'Málaga', 'Granada', 'Cádiz', 'Córdoba', 'Huelva', 'Jaén', 'Almería', 
+            'Madrid', 'Barcelona', 'Valencia', 'Murcia', 'Alicante', 'Bilbao', 'Zaragoza',
+            'Jerez', 'Úbeda', 'Baeza', 'Ronda', 'Estepona', 'Lebrija', 'Morón de la Frontera',
+            'Utrera', 'Algeciras', 'Cartagena', 'Logroño', 'Santander', 'Vitoria', 'Pamplona',
+            'Vigo', 'A Coruña', 'Oviedo', 'Gijón', 'León', 'Salamanca', 'Valladolid', 'Burgos',
+            'Cáceres', 'Badajoz', 'Toledo', 'Cuenca', 'Guadalajara', 'Albacete'
+        ];
+        const paises = ['Argentina', 'España', 'Francia']; // Expandir lista según el ojeador
+        const terminosAmbiguos = {
+          'argentina': { type: 'multi', options: ['country', 'artist'] },
+          'granaino': { type: 'multi', options: ['city', 'artist'] } // Usar 'city' para el filtro de ciudad
+        };
 
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        
+
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
         matchFilter.name = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.artist = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.time = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.venue = { $ne: null, $nin: ["", "N/A"] };
+        
+        let isAmbiguous = false;
+        
+        if (search) {
+            const normalizedSearch = search.trim().toLowerCase();
+            
+            if (terminosAmbiguos[normalizedSearch] && !preferredOption) {
+                isAmbiguous = true;
+                return res.json({
+                  isAmbiguous: true,
+                  searchTerm: search,
+                  options: terminosAmbiguos[normalizedSearch].options
+                });
+            }
 
+            let searchType = null;
+            if (preferredOption) {
+              searchType = preferredOption;
+            } else if (ciudadesYProvincias.some(cp => cp.toLowerCase() === normalizedSearch)) {
+              searchType = 'city';
+            } else if (paises.some(p => p.toLowerCase() === normalizedSearch)) {
+              searchType = 'country';
+            } else {
+              searchType = 'text';
+            }
+
+            if (searchType === 'city') {
+                const locationRegex = new RegExp(search, 'i');
+                matchFilter.$or = [{ city: locationRegex }, { provincia: locationRegex }];
+            } else if (searchType === 'country') {
+                matchFilter.country = { $regex: new RegExp(`^${search}$`, 'i') };
+            } else if (searchType === 'artist') {
+                 // Usamos $search para buscar el artista en cualquier campo, como el nombre o descripción
+                 // para la ambigüedad, pero si lo tuviéramos en un campo dedicado, usaríamos un match
+                aggregationPipeline.push({
+                    $search: {
+                        index: 'buscador',
+                        text: {
+                            query: search,
+                            path: 'artist',
+                            fuzzy: { "maxEdits": 1 }
+                        }
+                    }
+                });
+            } else { // 'text'
+                aggregationPipeline.push({ 
+                    $search: { 
+                        index: 'buscador', 
+                        text: { 
+                            query: search, 
+                            path: { 'wildcard': '*' }, 
+                            fuzzy: { "maxEdits": 1 } 
+                        } 
+                    } 
+                });
+            }
+        }
+        
+        // ... (código para otros filtros como city, country, artist, etc. permanece igual) ...
         if (city) {
             const locationRegex = new RegExp(city, 'i');
             matchFilter.$or = [{ city: locationRegex }, { provincia: locationRegex }];
@@ -90,12 +159,12 @@ app.get('/events', async (req, res) => {
             nextWeek.setDate(today.getDate() + 7);
             matchFilter.date.$lte = nextWeek.toISOString().split('T')[0];
         }
-
+        
         aggregationPipeline.push({ $match: matchFilter });
         aggregationPipeline.push({ $sort: { date: 1 } });
         
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
-        res.json(events);
+        res.json({ events, isAmbiguous: false });
     } catch (error) {
         console.error("Error al buscar eventos:", error);
         res.status(500).json({ error: "Error interno del servidor." });

@@ -1,11 +1,15 @@
-import 'dotenv/config';
-import express from 'express';
-import cors from 'cors';
-import { MongoClient, ObjectId } from 'mongodb'; // MODIFICADO
-import { createClient } from '@supabase/supabase-js';
-import { createRequire } from 'module';
-import { GoogleGenerativeAI } from '@google/generative-ai'; // AÑADIDO
-const require = createRequire(import.meta.url);
+// RUTA: /api/index.js (Versión CommonJS Completa)
+
+require('dotenv/config');
+const express = require('express');
+const cors = require('cors');
+const { ObjectId } = require('mongodb');
+const { createClient } = require('@supabase/supabase-js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const fetch = require('node-fetch');
+
+// Importamos nuestro fichero database.js con require
+const { connectToDatabase } = require('../database.js');
 
 // --- CONFIGURACIÓN ---
 const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
@@ -21,24 +25,6 @@ const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 // --- INICIALIZACIÓN DE SUPABASE ---
 const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 if (!supabase) console.warn("Supabase no configurado, las analíticas están deshabilitadas.");
-
-// --- PATRÓN DE CONEXIÓN A MONGODB ---
-let cachedDb = null;
-const mongoClient = new MongoClient(MONGO_URI);
-
-async function connectToDatabase() {
-    if (cachedDb) return cachedDb;
-    try {
-        await mongoClient.connect();
-        const db = mongoClient.db("DuendeDB");
-        cachedDb = db;
-        console.log("Nueva conexión a DuendeDB establecida y cacheada.");
-        return db;
-    } catch (error) {
-        console.error("Error al conectar a MongoDB:", error);
-        throw error;
-    }
-}
 
 // --- MIDDLEWARE ---
 app.use(cors({
@@ -74,8 +60,8 @@ app.get('/events', async (req, res) => {
         ];
         const paises = ['Argentina', 'España', 'Francia']; // Expandir lista según el ojeador
         const terminosAmbiguos = {
-          'argentina': { type: 'multi', options: ['country', 'artist'] },
-          'granaino': { type: 'multi', options: ['city', 'artist'] } // Usar 'city' para el filtro de ciudad
+         'argentina': { type: 'multi', options: ['country', 'artist'] },
+         'granaino': { type: 'multi', options: ['city', 'artist'] } // Usar 'city' para el filtro de ciudad
         };
 
         const matchFilter = {};
@@ -96,9 +82,9 @@ app.get('/events', async (req, res) => {
             if (terminosAmbiguos[normalizedSearch] && !preferredOption) {
                 isAmbiguous = true;
                 return res.json({
-                  isAmbiguous: true,
-                  searchTerm: search,
-                  options: terminosAmbiguos[normalizedSearch].options
+                    isAmbiguous: true,
+                    searchTerm: search,
+                    options: terminosAmbiguos[normalizedSearch].options
                 });
             }
 
@@ -121,16 +107,16 @@ app.get('/events', async (req, res) => {
             } else if (searchType === 'artist') {
                  // Usamos $search para buscar el artista en cualquier campo, como el nombre o descripción
                  // para la ambigüedad, pero si lo tuviéramos en un campo dedicado, usaríamos un match
-                aggregationPipeline.push({
-                    $search: {
-                        index: 'buscador',
-                        text: {
-                            query: search,
-                            path: 'artist',
-                            fuzzy: { "maxEdits": 1 }
-                        }
-                    }
-                });
+                 aggregationPipeline.push({
+                     $search: {
+                         index: 'buscador',
+                         text: {
+                             query: search,
+                             path: 'artist',
+                             fuzzy: { "maxEdits": 1 }
+                         }
+                     }
+                 });
             } else { // 'text'
                 aggregationPipeline.push({ 
                     $search: { 
@@ -446,4 +432,4 @@ app.post('/log-interaction', async (req, res) => {
 });
 
 // Exporta la app para que Vercel la pueda usar
-export default app;
+module.exports = app;

@@ -1,26 +1,29 @@
-// Contenido corregido para database.js
-import { MongoClient } from 'mongodb';
+// RUTA: /database.js (Versión CommonJS)
 
-// Tomaremos la URL de conexión de las variables de entorno de Render
-const uri = process.env.MONGODB_URI; 
+const { MongoClient } = require('mongodb');
 
-if (!uri) {
-    throw new Error('La variable de entorno MONGODB_URI no está definida.');
+const MONGO_URI = process.env.MONGO_URI;
+const DB_NAME = "DuendeDB";
+
+if (!MONGO_URI) {
+    throw new Error('La variable de entorno MONGO_URI no está definida.');
 }
 
-const client = new MongoClient(uri);
+let cachedDb = null;
 
-async function connectDB() {
+async function connectToDatabase() {
+    if (cachedDb) {
+        return cachedDb;
+    }
     try {
-        await client.connect();
-        console.log("Conectado exitosamente a la base de datos MongoDB");
-        // Devuelve el cliente para que podamos usarlo en otras partes
-        return client;
-    } catch (e) {
-        console.error("No se pudo conectar a MongoDB", e);
-        process.exit(1); 
+        const client = await MongoClient.connect(MONGO_URI);
+        const db = client.db(DB_NAME);
+        cachedDb = db;
+        return db;
+    } catch (error) {
+        console.error("Error al conectar con la base de datos:", error);
+        throw new Error("No se pudo establecer conexión con la base de datos.");
     }
 }
 
-// Usamos 'export' en lugar de 'module.exports'
-export { connectDB, client };
+module.exports = { connectToDatabase };

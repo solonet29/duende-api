@@ -48,10 +48,10 @@ app.get('/events', async (req, res) => {
         const eventsCollection = db.collection("events");
         const { search, artist, city, country, dateFrom, dateTo, timeframe, preferredOption } = req.query; // Añadimos preferredOption
         let aggregationPipeline = [];
-        
+
         // --- LISTA DE CIUDADES, PAÍSES Y TÉRMINOS AMBIGUOS ---
         const ciudadesYProvincias = [
-            'Sevilla', 'Málaga', 'Granada', 'Cádiz', 'Córdoba', 'Huelva', 'Jaén', 'Almería', 
+            'Sevilla', 'Málaga', 'Granada', 'Cádiz', 'Córdoba', 'Huelva', 'Jaén', 'Almería',
             'Madrid', 'Barcelona', 'Valencia', 'Murcia', 'Alicante', 'Bilbao', 'Zaragoza',
             'Jerez', 'Úbeda', 'Baeza', 'Ronda', 'Estepona', 'Lebrija', 'Morón de la Frontera',
             'Utrera', 'Algeciras', 'Cartagena', 'Logroño', 'Santander', 'Vitoria', 'Pamplona',
@@ -60,25 +60,33 @@ app.get('/events', async (req, res) => {
         ];
         const paises = ['Argentina', 'España', 'Francia']; // Expandir lista según el ojeador
         const terminosAmbiguos = {
-         'argentina': { type: 'multi', options: ['country', 'artist'] },
-         'granaino': { type: 'multi', options: ['city', 'artist'] } // Usar 'city' para el filtro de ciudad
+            'argentina': { type: 'multi', options: ['country', 'artist'] },
+            'granaino': { type: 'multi', options: ['city', 'artist'] } // Usar 'city' para el filtro de ciudad
         };
 
         const matchFilter = {};
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
+        // Se inicializa el filtro de fechas siempre
         matchFilter.date = { $gte: today.toISOString().split('T')[0] };
         matchFilter.name = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.artist = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.time = { $ne: null, $nin: ["", "N/A"] };
         matchFilter.venue = { $ne: null, $nin: ["", "N/A"] };
-        
+
+        // --- Lógica del timeframe movida fuera del bloque 'search' ---
+        if (timeframe === 'week' && !dateTo) {
+            const nextWeek = new Date(today);
+            nextWeek.setDate(today.getDate() + 7);
+            matchFilter.date.$lte = nextWeek.toISOString().split('T')[0];
+        }
+
         let isAmbiguous = false;
-        
+
         if (search) {
             const normalizedSearch = search.trim().toLowerCase();
-            
+
             if (terminosAmbiguos[normalizedSearch] && !preferredOption) {
                 isAmbiguous = true;
                 return res.json({
@@ -90,13 +98,13 @@ app.get('/events', async (req, res) => {
 
             let searchType = null;
             if (preferredOption) {
-              searchType = preferredOption;
+                searchType = preferredOption;
             } else if (ciudadesYProvincias.some(cp => cp.toLowerCase() === normalizedSearch)) {
-              searchType = 'city';
+                searchType = 'city';
             } else if (paises.some(p => p.toLowerCase() === normalizedSearch)) {
-              searchType = 'country';
+                searchType = 'country';
             } else {
-              searchType = 'text';
+                searchType = 'text';
             }
 
             if (searchType === 'city') {
@@ -105,50 +113,34 @@ app.get('/events', async (req, res) => {
             } else if (searchType === 'country') {
                 matchFilter.country = { $regex: new RegExp(`^${search}$`, 'i') };
             } else if (searchType === 'artist') {
-                 // Usamos $search para buscar el artista en cualquier campo, como el nombre o descripción
-                 // para la ambigüedad, pero si lo tuviéramos en un campo dedicado, usaríamos un match
-                 aggregationPipeline.push({
-                     $search: {
-                         index: 'buscador',
-                         text: {
-                             query: search,
-                             path: 'artist',
-                             fuzzy: { "maxEdits": 1 }
-                         }
-                     }
-                 });
+                aggregationPipeline.push({
+                    $search: {
+                        index: 'buscador',
+                        text: {
+                            query: search,
+                            path: 'artist',
+                            fuzzy: { "maxEdits": 1 }
+                        }
+                    }
+                });
             } else { // 'text'
-                aggregationPipeline.push({ 
-                    $search: { 
-                        index: 'buscador', 
-                        text: { 
-                            query: search, 
-                            path: { 'wildcard': '*' }, 
-                            fuzzy: { "maxEdits": 1 } 
-                        } 
-                    } 
+                aggregationPipeline.push({
+                    $search: {
+                        index: 'buscador',
+                        text: {
+                            query: search,
+                            path: { 'wildcard': '*' },
+                            fuzzy: { "maxEdits": 1 }
+                        }
+                    }
                 });
             }
         }
-        
-        // ... (código para otros filtros como city, country, artist, etc. permanece igual) ...
-        if (city) {
-            const locationRegex = new RegExp(city, 'i');
-            matchFilter.$or = [{ city: locationRegex }, { provincia: locationRegex }];
-        }
-        if (country) matchFilter.country = { $regex: new RegExp(`^${country}$`, 'i') };
-        if (artist) matchFilter.artist = { $regex: new RegExp(artist, 'i') };
-        if (dateFrom) matchFilter.date.$gte = dateFrom;
-        if (dateTo) matchFilter.date.$lte = dateTo;
-        if (timeframe === 'week' && !dateTo) {
-            const nextWeek = new Date(today);
-            nextWeek.setDate(today.getDate() + 7);
-            matchFilter.date.$lte = nextWeek.toISOString().split('T')[0];
-        }
-        
-        aggregationPipeline.push({ $match: matchFilter });
+
+        // Se añaden los filtros de búsqueda y tiempo al pipeline de agregación
+        aggregationPipeline.unshift({ $match: matchFilter });
         aggregationPipeline.push({ $sort: { date: 1 } });
-        
+
         const events = await eventsCollection.aggregate(aggregationPipeline).toArray();
         res.json({ events, isAmbiguous: false });
     } catch (error) {
@@ -320,7 +312,7 @@ Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE est
 5.  **Glosario Final:** Al final de todo el itinerario, incluye una sección \`### Glosario Flamenco para el Viajero\` donde expliques brevemente 2-3 términos clave que hayas usado (ej. peña, tablao, duende, tercio).
 
 Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes: [Nombre del Lugar].`;
-        
+
         const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
         const geminiResponse = await fetch(geminiUrl, {
@@ -347,7 +339,7 @@ Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares rec
 
 app.post('/log-search', async (req, res) => {
     if (!supabase) return res.status(200).json({ message: 'Analytics disabled.' });
-    
+
     const startTime = Date.now();
     try {
         const { searchTerm, filtersApplied, resultsCount, sessionId } = req.body;
@@ -355,10 +347,10 @@ app.post('/log-search', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        
+
         // Esta parte necesita 'ua-parser-js' que no está importado con ES Modules
         // const ua = parser(uaString);
-        
+
         const eventData = {
             search_term: searchTerm,
             filters_applied: filtersApplied,
@@ -399,7 +391,7 @@ app.post('/log-interaction', async (req, res) => {
 
         const headers = req.headers;
         const uaString = headers['user-agent'];
-        
+
         // Esta parte necesita 'ua-parser-js'
         // const ua = parser(uaString);
 

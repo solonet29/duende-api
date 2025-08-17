@@ -260,7 +260,7 @@ Para cada lugar recomendado, envuelve su nombre entre corchetes: [Nombre del Lug
 Usa un tono cercano, poético y apasionado. Asegúrate de que los párrafos no sean demasiado largos para facilitar la lectura en móvil.`;
 
     try {
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
         const geminiResponse = await fetch(geminiUrl, {
             method: 'POST',
@@ -315,7 +315,7 @@ Tu tarea es crear un itinerario detallado y profesional. Sigue ESTRICTAMENTE est
 
 Usa un tono inspirador y práctico. Sigue envolviendo los nombres de lugares recomendados entre corchetes: [Nombre del Lugar].`;
 
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`;
         const payload = { contents: [{ role: "user", parts: [{ text: tripPrompt }] }] };
         const geminiResponse = await fetch(geminiUrl, {
             method: 'POST',

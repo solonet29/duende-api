@@ -20,7 +20,7 @@ const app = express();
 
 // --- INICIALIZACIÓN DE GEMINI ---
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
 
 // --- INICIALIZACIÓN DE SUPABASE ---
 const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
@@ -187,15 +187,17 @@ const nightPlanPromptTemplate = (event) => `
     4.  **Para Alargar la Magia (Después del Espectáculo):** Sugiere un lugar cercano para tomar una última copa en un ambiente relajado.
 `;
 
-app.get('/generate-night-plan', async (req, res) => {
+app.post('/generate-night-plan', async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
-    const { eventId } = req.query;
+    const { eventId } = req.body;
 
     if (!eventId) {
         return res.status(400).json({ error: 'Falta el ID del evento.' });
     }
 
     try {
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" }); // Modelo optimizado para mayor velocidad y menor coste
+
         const db = await connectToDatabase();
         const eventsCollection = db.collection('events');
         const event = await eventsCollection.findOne({ _id: new ObjectId(eventId) });

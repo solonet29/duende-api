@@ -56,6 +56,7 @@ app.get('/events', async (req, res) => {
         if (lat && lon) {
             const latitude = parseFloat(lat);
             const longitude = parseFloat(lon);
+            const radiusInKm = parseInt(req.query.radius, 10) || 120;
 
             if (isNaN(latitude) || isNaN(longitude)) {
                 return res.status(400).json({ error: "Latitud o longitud inválida." });
@@ -69,7 +70,7 @@ app.get('/events', async (req, res) => {
                             type: "Point",
                             coordinates: [longitude, latitude]
                         },
-                        $maxDistance: 50000 // 50 kilómetros en metros
+                        $maxDistance: radiusInKm * 1000 // Convertir km a metros
                     }
                 }
             };

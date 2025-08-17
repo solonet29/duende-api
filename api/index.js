@@ -46,8 +46,47 @@ app.get('/events', async (req, res) => {
     try {
         const db = await connectToDatabase();
         const eventsCollection = db.collection("events");
-        const { search, artist, city, country, dateFrom, dateTo, timeframe, preferredOption } = req.query; // Añadimos preferredOption
+        const { search, artist, city, country, dateFrom, dateTo, timeframe, preferredOption, lat, lon } = req.query;
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const todayString = today.toISOString().split('T')[0];
+
+        // --- LÓGICA DE BÚSQUEDA GEOESPACIAL ---
+        if (lat && lon) {
+            const latitude = parseFloat(lat);
+            const longitude = parseFloat(lon);
+
+            if (isNaN(latitude) || isNaN(longitude)) {
+                return res.status(400).json({ error: "Latitud o longitud inválida." });
+            }
+
+            const query = {
+                date: { $gte: todayString },
+                location: {
+                    $near: {
+                        $geometry: {
+                            type: "Point",
+                            coordinates: [longitude, latitude]
+                        },
+                        $maxDistance: 50000 // 50 kilómetros en metros
+                    }
+                }
+            };
+
+            const events = await eventsCollection.find(query).limit(20).toArray();
+            return res.json({ events, isAmbiguous: false });
+        }
+
+        // --- LÓGICA DE BÚSQUEDA EXISTENTE (TEXTO, FILTROS, ETC.) ---
         let aggregationPipeline = [];
+        const matchFilter = {
+            date: { $gte: todayString },
+            name: { $ne: null, $nin: ["", "N/A"] },
+            artist: { $ne: null, $nin: ["", "N/A"] },
+            time: { $ne: null, $nin: ["", "N/A"] },
+            venue: { $ne: null, $nin: ["", "N/A"] }
+        };
 
         // --- LISTA DE CIUDADES, PAÍSES Y TÉRMINOS AMBIGUOS ---
         const ciudadesYProvincias = [
@@ -58,24 +97,12 @@ app.get('/events', async (req, res) => {
             'Vigo', 'A Coruña', 'Oviedo', 'Gijón', 'León', 'Salamanca', 'Valladolid', 'Burgos',
             'Cáceres', 'Badajoz', 'Toledo', 'Cuenca', 'Guadalajara', 'Albacete'
         ];
-        const paises = ['Argentina', 'España', 'Francia']; // Expandir lista según el ojeador
+        const paises = ['Argentina', 'España', 'Francia'];
         const terminosAmbiguos = {
             'argentina': { type: 'multi', options: ['country', 'artist'] },
-            'granaino': { type: 'multi', options: ['city', 'artist'] } // Usar 'city' para el filtro de ciudad
+            'granaino': { type: 'multi', options: ['city', 'artist'] }
         };
 
-        const matchFilter = {};
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-
-        // Se inicializa el filtro de fechas siempre
-        matchFilter.date = { $gte: today.toISOString().split('T')[0] };
-        matchFilter.name = { $ne: null, $nin: ["", "N/A"] };
-        matchFilter.artist = { $ne: null, $nin: ["", "N/A"] };
-        matchFilter.time = { $ne: null, $nin: ["", "N/A"] };
-        matchFilter.venue = { $ne: null, $nin: ["", "N/A"] };
-
-        // --- Lógica del timeframe movida fuera del bloque 'search' ---
         if (timeframe === 'week' && !dateTo) {
             const nextWeek = new Date(today);
             nextWeek.setDate(today.getDate() + 7);
@@ -111,33 +138,67 @@ app.get('/events', async (req, res) => {
                 const locationRegex = new RegExp(search, 'i');
                 matchFilter.$or = [{ city: locationRegex }, { provincia: locationRegex }];
             } else if (searchType === 'country') {
-                matchFilter.country = { $regex: new RegExp(`^${search}$`, 'i') };
+                matchFilter.country = { $regex: new RegExp(`^${search}// RUTA: /api/index.js (Versión CommonJS Completa)
+
+require('dotenv/config');
+const express = require('express');
+const cors = require('cors');
+const { ObjectId } = require('mongodb');
+const { createClient } = require('@supabase/supabase-js');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const fetch = require('node-fetch');
+
+// Importamos nuestro fichero database.js con require
+const { connectToDatabase } = require('../database.js');
+
+// --- CONFIGURACIÓN ---
+const { MONGO_URI, GEMINI_API_KEY, SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
+if (!MONGO_URI) throw new Error('MONGO_URI no está definida.');
+if (!GEMINI_API_KEY) throw new Error('GEMINI_API_KEY no está definida.');
+
+const app = express();
+
+// --- INICIALIZACIÓN DE GEMINI ---
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+
+
+// --- INICIALIZACIÓN DE SUPABASE ---
+const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY) ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+if (!supabase) console.warn("Supabase no configurado, las analíticas están deshabilitadas.");
+
+// --- MIDDLEWARE ---
+app.use(cors({
+    origin: ['https://buscador.afland.es', 'https://duende-frontend.vercel.app', 'http://localhost:3000', 'https://afland.es'],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.use(express.json());
+
+// --- RUTAS DE LA API ---
+
+app.get('/version', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, max-age=0');
+    res.status(200).json({ version: "15.4-ambiguous-search", timestamp: new Date().toISOString() });
+});
+
+, 'i') };
             } else if (searchType === 'artist') {
                 aggregationPipeline.push({
                     $search: {
                         index: 'buscador',
-                        text: {
-                            query: search,
-                            path: 'artist',
-                            fuzzy: { "maxEdits": 1 }
-                        }
+                        text: { query: search, path: 'artist', fuzzy: { "maxEdits": 1 } }
                     }
                 });
             } else { // 'text'
                 aggregationPipeline.push({
                     $search: {
                         index: 'buscador',
-                        text: {
-                            query: search,
-                            path: { 'wildcard': '*' },
-                            fuzzy: { "maxEdits": 1 }
-                        }
+                        text: { query: search, path: { 'wildcard': '*' }, fuzzy: { "maxEdits": 1 } }
                     }
                 });
             }
         }
 
-        // Se añaden los filtros de búsqueda y tiempo al pipeline de agregación
         aggregationPipeline.unshift({ $match: matchFilter });
         aggregationPipeline.push({ $sort: { date: 1 } });
 
